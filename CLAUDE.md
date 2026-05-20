@@ -13,7 +13,7 @@ I'm Eduardo, OutSystems Model team. Primarily .NET/C# on Windows.
 ## Research sources
 - Other OutSystems repos: `gh` CLI is the source of truth (PRs, workflows, content).
 - Azure DevOps: always use `az` CLI — never WebFetch or browser.
-- Model codebase reference at `D:\OutSystems.Model`.
+- Model codebase reference at `C:\git\OutSystems.Model`.
 
 ## Custom tools
 - `Get-FailedTestsFromPipeline -Url "<build_url>"` — fetches failed tests from an Azure DevOps build. Markdown by default; `-OutputFile <path>` for JSON.
