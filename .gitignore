@@ -1,0 +1,18 @@
+# Everything ignored by default
+*
+
+# Allowed files
+!.gitignore
+!README.md
+!CLAUDE.md
+!rules/
+!rules/build-workflow.md
+!rules/git-workflow.md
+!rules/personal-config-sync.md
+!rules/pr-conventions.md
+!rules/writing-claude-md.md
+!skills/
+!skills/*/
+!skills/**/SKILL.md
+!skills/**/reference/
+!skills/**/reference/*.md
