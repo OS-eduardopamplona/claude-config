@@ -10,6 +10,10 @@ I'm Eduardo, OutSystems Model team. Primarily .NET/C# on Windows.
 - **Comments** → don't write them. Allowed exceptions: workarounds (must cite a real Jira/GitHub URL, not just an ID), `// TODO(RDMST-xxxx):` markers, XML doc comments on public API types/members only (not internals, even if some are documented). Never write: restating method/variable names, "what" comments, section banners, "added for X" notes. Rename instead of explaining.
 - **Build/test failures** after your changes are caused by those changes until proven otherwise. To claim a failure predates your changes, you MUST reproduce it on a clean checkout of master/main — git diff, git log, and error messages are supporting context, not sufficient evidence. When verified pre-existing, state the evidence and ask me how to proceed.
 
+## Git
+- Work on the main repo checkout — do not create separate worktrees.
+- Leave changes local and unstaged. Only stage/commit/push when Eduardo asks.
+
 ## Research sources
 - Other OutSystems repos: `gh` CLI is the source of truth (PRs, workflows, content).
 - Azure DevOps: always use `az` CLI — never WebFetch or browser.
