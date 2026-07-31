@@ -10,3 +10,5 @@
 rules/koda.*
 !skills/
 !skills/**
+!learnings/
+!learnings/*.md
