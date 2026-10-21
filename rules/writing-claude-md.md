@@ -1,3 +1,9 @@
+---
+paths:
+  - "**/CLAUDE.md"
+  - "**/.claude/rules/*.md"
+---
+
 # Writing CLAUDE.md Files
 
 ## Principles
