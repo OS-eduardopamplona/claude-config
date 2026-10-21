@@ -1,0 +1,1 @@
+- [2026-10-19] The RoundTripSweep `Sweep` job's displayName is matched by `SLICE_JOB_PREFIX` in tools/roundtrip/daily-report/report.mjs; renaming one silently breaks the daily report's slice lookup — evidence: nearly renamed it with the corpus 2.2.0 bump, caught by one grep — target: .claude/rules path-scoped to azure-pipelines.yml + tools/roundtrip

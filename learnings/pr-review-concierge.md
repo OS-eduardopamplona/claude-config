@@ -1,0 +1,1 @@
+- [2026-10-16] `mattpocock-skills:wayfinder` is disable-model-invocation, so a session spawned to work a map ticket can't load it; the brief must carry the claim/Resolution/close/map-gist steps — evidence: 1 refused Skill call + a round-trip to the parent session — target: pr-review-concierge CLAUDE.md
