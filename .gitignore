@@ -14,3 +14,4 @@ rules/koda.*
 !learnings/*.md
 !hooks/
 !hooks/*.sh
+!.gitattributes
