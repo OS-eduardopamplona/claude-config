@@ -17,7 +17,7 @@ k=$((tokens / 1000))
 
 if [ "$tokens" -ge "$handoff" ]; then
   level=handoff
-  msg="Context guard: conversation is at ~${k}K tokens (handoff threshold ${handoff}). Do not start new work. Finish or pause the current step, then do the automatic handoff from the context rule: write the handoff file and start a fresh session from it."
+  msg="Context guard: conversation is at ~${k}K tokens (handoff threshold ${handoff}). Do not start new work. Finish or pause the current step, then follow the handoff note in the context rule (it covers sessions with linked children)."
 elif [ "$tokens" -ge "$warn" ]; then
   level=warn
   msg="Context guard: conversation is at ~${k}K tokens (warn threshold ${warn}). Delegate wide searches to subagents. If the user starts a new or unrelated task, recommend a handoff and a fresh session first."
