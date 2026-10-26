@@ -12,3 +12,5 @@ rules/koda.*
 !skills/**
 !learnings/
 !learnings/*.md
+!hooks/
+!hooks/*.sh
