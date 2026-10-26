@@ -15,3 +15,4 @@ rules/koda.*
 !hooks/
 !hooks/*.sh
 !.gitattributes
+!hooks/*.ps1
