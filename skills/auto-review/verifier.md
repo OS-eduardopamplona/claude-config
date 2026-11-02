@@ -18,6 +18,7 @@ Each reply with `"rebuttal": true`: re-check the author's argument at full depth
 `rejected` carries the evidence in its body. Other replies: check `fixed` against the head's code.
 
 Write `<run dir>/verified.json`: the same shape as `verdict.json` with the kept findings and replies as you settled
-them, plus `"dropped": [{"finding": "<defect>", "why": "…"}]`. Keep `checked` and `notes`, correcting what you found
-wrong. Done when every finding and reply has a decision and the worktree is back at the head (`git status
+them, plus `"dropped": [{"finding": "<defect>", "why": "…"}]`. Keep `notes`, correcting what you found
+wrong and holding them to `reviewer.md`'s length limits; your own process (what you reread or reran) stays out of
+them. Done when every finding and reply has a decision and the worktree is back at the head (`git status
 --porcelain` empty).

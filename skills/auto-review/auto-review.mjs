@@ -25,7 +25,7 @@ const SEVERITY = {
   minor: { emoji: "🟡", label: "Minor", blocks: false },
   nit: { emoji: "⚪", label: "Nit", blocks: false },
 };
-const LEGEND = "Severity: 🔴 Blocker · 🟠 Major (both block) · 🟡 Minor · ⚪ Nit (author decides).";
+const LEGEND = "<sub>Severity: 🔴 Blocker · 🟠 Major (both block) · 🟡 Minor · ⚪ Nit (author decides).</sub>";
 const TEST_PATH = /(^|\/)tests?\/|\.Tests?\/|Tests?\.cs$|\.test\.(m?[jt]sx?)$/i;
 
 const run = (cmd, args, opts = {}) =>
@@ -213,8 +213,9 @@ function anchorable(diff) {
 const where = (f) => `\`${f.file}${f.line ? `:${f.line}` : ""}\``;
 const renderFinding = (f) => {
   const s = SEVERITY[f.severity];
-  return [`${s.emoji} **${s.label}** · ${f.category} · ${f.confidence}`, f.defect, "", `**Scenario:** ${f.scenario}`, "", `**Fix:** ${f.fix}`, "", FOOTER].join("\n");
+  return [`${s.emoji} **${s.label}** · ${f.category} · ${f.confidence}`, "", f.defect, "", `- **Scenario:** ${f.scenario}`, `- **Fix:** ${f.fix}`, "", FOOTER].join("\n");
 };
+const bullets = (v) => (Array.isArray(v) ? v : [v ?? ""]).map((x) => String(x).trim()).filter(Boolean).map((x) => `- ${x}`);
 const listItem = (f) => `- ${SEVERITY[f.severity].emoji} ${where(f)}: ${f.defect}`;
 
 function validateVerdict(v) {
@@ -228,7 +229,6 @@ function validateVerdict(v) {
     if (!["fixed", "still_open", "accepted", "rejected", "correction"].includes(r.kind)) errors.push(`reply ${i}: kind ${r.kind}`);
     if (!r.thread_id) errors.push(`reply ${i}: no thread_id`);
   }
-  if (typeof v.checked !== "string" || !v.checked.trim()) errors.push("no checked summary");
   if (errors.length) throw new Error(`verified.json is malformed:\n${errors.join("\n")}`);
 }
 
@@ -283,16 +283,18 @@ function plan(dir) {
 
   const marker = `<!-- auto-review head=${meta.head} round=${meta.round} -->`;
   const headline = blocking.length
-    ? `${findings.length} finding(s): ${tally}. ${LEGEND}${inline.length ? " Findings are inline." : ""}`
-    : `no blocking issues at ${short(meta.head)}${findings.length ? ` (${tally}, the author decides)` : ""}.${findings.length ? ` ${LEGEND}` : ""}`;
+    ? `**${findings.length} finding${findings.length > 1 ? "s" : ""}: ${tally}**${inline.length ? ", inline" : ""}.`
+    : `**No blocking issues**${findings.length ? ` (${tally}, the author decides)` : ""}.`;
+  const notes = bullets(v.notes);
   const body = [
-    `🤖 **Automated review by Claude** (round ${meta.round}, head ${short(meta.head)}): ${headline}`,
+    `🤖 **Automated review by Claude** · round ${meta.round} · \`${short(meta.head)}\``,
     "",
-    `**Checked:** ${v.checked.trim()}`,
-    ...(unanchored.length ? ["", "**Not anchorable inline:**", ...unanchored.map((f) => `${listItem(f)} **Scenario:** ${f.scenario} **Fix:** ${f.fix}`)] : []),
-    ...(left.length ? ["", "**Left to the human reviewer** (plausible, not verified, not blocking in this last round):", ...left.map(listItem)] : []),
-    ...(resolved.length ? ["", "**Resolved since the last round:**", ...resolved.map((t) => `- \`${t.path}${t.line ? `:${t.line}` : ""}\``)] : []),
-    ...(v.notes?.trim() ? ["", v.notes.trim()] : []),
+    headline,
+    ...(unanchored.length ? ["", "**Not anchorable inline**", ...unanchored.flatMap((f) => [listItem(f), `  - **Scenario:** ${f.scenario}`, `  - **Fix:** ${f.fix}`])] : []),
+    ...(left.length ? ["", "**Left to the human reviewer** (plausible, unverified, not blocking in this last round)", ...left.map(listItem)] : []),
+    ...(resolved.length ? ["", "**Resolved since the last round**", ...resolved.map((t) => `- \`${t.path}${t.line ? `:${t.line}` : ""}\``)] : []),
+    ...(notes.length ? ["", "**Notes**", ...notes] : []),
+    ...(findings.length ? ["", LEGEND] : []),
     ...(blocking.length ? [] : ["", `@${ME} for the human pass.`]),
     "",
     marker,

@@ -19,7 +19,6 @@ Raw data: `scratchpad/ruben/all.jsonl`.
 - Checklist before the code read (loop + Nuno):
   1. Every new or changed test fails without the production change (revert non-test files in a worktree) and passes at
      head. A vacuous test is a finding.
-  2. CI state: read failures, name the failing tests.
   3. Conflict resolutions in merges are checked; semantic conflicts with other open PRs (`git merge-tree`) noted.
   4. Repo rules: `CLAUDE.md`, `.claude/rules`, feature-toggle safety in Model (toggle off == master, real uuid).
   5. Consumer impact for public API changes (`consumer-impact` skill).
