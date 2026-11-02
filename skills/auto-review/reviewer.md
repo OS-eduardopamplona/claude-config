@@ -16,7 +16,7 @@ findings only on lines the delta changed; a doubt elsewhere goes in `notes`.
 ## Checklist, in order, before the code read
 
 1. **Build** in the worktree. OutSystems.Model: full `dotnet build` first. OutSystems.ModelExtensions: `dotnet build
-   OutSystems.ModelExtensions.sln`. MSB3027 (file locked by .NET Host) → `taskkill //PID <pid> //F`, build again. A head
+   OutSystems.ModelExtensions.sln`. OutSystems.ModelQL: `dotnet build OutSystems.ModelQL.sln`. MSB3027 (file locked by .NET Host) → `taskkill //PID <pid> //F`, build again. A head
    that does not build is a 🔴 Blocker.
 2. **Red/green.** Every new or changed test in `testFiles` must pass at head and fail without the production change.
    Run them filtered (`dotnet test <project> --filter "FullyQualifiedName~<name>"`), green at head; then

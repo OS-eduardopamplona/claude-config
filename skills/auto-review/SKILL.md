@@ -1,6 +1,6 @@
 ---
 name: auto-review
-description: Eduardo's automated PR reviewer for OutSystems.Model and OutSystems.ModelExtensions. Args: [dry-run] [owner/repo#n ...].
+description: Eduardo's automated PR reviewer for the team's OutSystems.Model, OutSystems.ModelExtensions and OutSystems.ModelQL PRs. Args: [dry-run] [owner/repo#n ...].
 disable-model-invocation: true
 hooks:
   PreToolUse:
@@ -18,7 +18,7 @@ selects, prepares and posts, so what reaches GitHub is decided in code, never wr
 Eduardo's account: the only GitHub writes of a run are the `post` step's, and a run approves nothing, ever.
 
 `S` below is `C:/Users/U005017/.claude/skills/auto-review`. Run every command with absolute paths from where you are;
-your own shell stays out of the review worktrees (`C:/git/ar-model`, `C:/git/ar-mx`): the read-only hook guards them.
+your own shell stays out of the review worktrees (`C:/git/ar-model`, `C:/git/ar-mx`, `C:/git/ar-mql`): the read-only hook guards them.
 
 **Dry run** (`dry-run` in the args): the whole run, with `post --dry-run`, which prints what it would post. Nothing
 reaches GitHub. PRs named in the args are reviewed even when selection would skip them (`candidates --force`).
@@ -26,8 +26,8 @@ reaches GitHub. PRs named in the args are reviewed even when selection would ski
 ## Steps
 
 1. `node $S/auto-review.mjs lock`. Exit 3 means another run holds it: end the run with that one line.
-2. `node $S/auto-review.mjs candidates [--force <PRs from the args>]`. It prints `due` (at most 3 a run, newest
-   first), `deferred` (next hour) and `skipped` with why: a head already reviewed, a draft, or a head whose only change
+2. `node $S/auto-review.mjs candidates [--force <PRs from the args>]`. It prints `due` (at most 3 a run, PRs requesting Eduardo first, then
+   newest first), `deferred` (next hour) and `skipped` with why: a head already reviewed, a draft, or a head whose only change
    since the reviewed one is a clean merge of the base. Nothing due → step 5.
 3. Each due PR, one at a time:
    1. `node $S/auto-review.mjs prepare <repo>#<n> <round> <lastHead or ->` prints the **run dir**: `pr.json`,

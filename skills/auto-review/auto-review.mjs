@@ -8,13 +8,14 @@ const ME = "OS-eduardopamplona";
 const REPOS = {
   "OutSystems/OutSystems.Model": { clone: "C:/git/OutSystems.Model", worktree: "C:/git/ar-model" },
   "OutSystems/OutSystems.ModelExtensions": { clone: "C:/git/OutSystems.ModelExtensions", worktree: "C:/git/ar-mx" },
+  "OutSystems/OutSystems.ModelQL": { clone: "C:/git/OutSystems.ModelQL", worktree: "C:/git/ar-mql" },
 };
 const HOME = path.join(os.homedir(), ".claude", "auto-review");
 const LOCK = path.join(HOME, "lock.json");
-const LOCK_TTL_MS = 3 * 60 * 60 * 1000;
+const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_PER_RUN = 3;
 const LAST_ROUND = 3;
-const STALE_DAYS = 30;
+const STALE_DAYS = 7;
 const FOOTER = "— Automated review by Claude";
 const MARKER = /<!-- auto-review head=([0-9a-f]{40}) round=(\d+) -->/g;
 const REPLY_MARKER = (kind) => `<!-- auto-review reply=${kind} -->`;
@@ -102,21 +103,17 @@ function candidates(args) {
   const explicit = args.filter((a) => !a.startsWith("--")).map(parsePrArg);
   let picked = explicit;
   if (!explicit.length) {
-    const requested = searchPrs("user-review-requested:@me");
-    const touched = [...searchPrs("reviewed-by:@me"), ...searchPrs("commenter:@me")];
     const key = (p) => `${p.repository.nameWithOwner}#${p.number}`;
-    const requestedKeys = new Set(requested.map(key));
-    const all = new Map([...requested, ...touched].filter((p) => !p.isDraft && p.author?.login !== ME && !p.author?.is_bot && !String(p.author?.login).startsWith("app/")).map((p) => [key(p), p]));
-    picked = [...all.values()]
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, requested: requestedKeys.has(key(p)) }));
+    const requestedKeys = new Set(searchPrs("user-review-requested:@me").map(key));
+    picked = searchPrs("is:pr")
+      .filter((p) => !p.isDraft && p.author?.login !== ME && !p.author?.is_bot && !String(p.author?.login).startsWith("app/"))
+      .sort((a, b) => requestedKeys.has(key(b)) - requestedKeys.has(key(a)) || b.updatedAt.localeCompare(a.updatedAt))
+      .map((p) => ({ repo: p.repository.nameWithOwner, number: p.number }));
   }
-  const assessed = [];
-  for (const p of picked) {
-    const a = assess(p.repo, p.number, { force });
-    if (!explicit.length && !p.requested && !a.lastHead) continue;
-    assessed.push(a);
-  }
+  const assessed = picked.map((p) => {
+    try { return assess(p.repo, p.number, { force }); }
+    catch (e) { return { repo: p.repo, number: p.number, skip: `assessment failed, retried next run: ${String(e.message).split(/\r?\n/)[0]}` }; }
+  });
   const due = assessed.filter((a) => !a.skip);
   const result = { due: explicit.length ? due : due.slice(0, MAX_PER_RUN), deferred: explicit.length ? [] : due.slice(MAX_PER_RUN).map((a) => `${a.repo}#${a.number}`), skipped: assessed.filter((a) => a.skip).map((a) => `${a.repo}#${a.number}: ${a.skip}`) };
   console.log(JSON.stringify(result, null, 2));
