@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "node \"C:/Users/U005017/.claude/skills/auto-review/readonly-hook.mjs\"", "timeout": 10}]}
+    ]
+  }
+}
