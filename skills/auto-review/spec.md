@@ -6,7 +6,7 @@ Raw data: `scratchpad/ruben/all.jsonl`.
 
 ## Trigger
 - Hourly scheduled run on weekdays. Picks every open, non-draft PR in the team's repos (OutSystems.Model,
-  OutSystems.ModelExtensions, OutSystems.ModelQL) not authored by Eduardo, PRs requesting him first. (Ruben: review-requested, hourly at :20. Francisco: every open PR,
+  OutSystems.ModelExtensions, OutSystems.ModelQL) not authored by Eduardo, follow-up rounds first, then PRs requesting him. (Ruben: review-requested, hourly at :20. Francisco: every open PR,
   too noisy. Nuno: batch over open PRs.)
 - Stateless idempotency: hidden `<!-- auto-review head=<full sha> round=<n> -->` in every post. Skip a head already
   marked. (Francisco)

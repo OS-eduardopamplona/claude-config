@@ -114,7 +114,7 @@ function candidates(args) {
     try { return assess(p.repo, p.number, { force }); }
     catch (e) { return { repo: p.repo, number: p.number, skip: `assessment failed, retried next run: ${String(e.message).split(/\r?\n/)[0]}` }; }
   });
-  const due = assessed.filter((a) => !a.skip);
+  const due = assessed.filter((a) => !a.skip).sort((a, b) => (b.round > 1) - (a.round > 1));
   const result = { due: explicit.length ? due : due.slice(0, MAX_PER_RUN), deferred: explicit.length ? [] : due.slice(MAX_PER_RUN).map((a) => `${a.repo}#${a.number}`), skipped: assessed.filter((a) => a.skip).map((a) => `${a.repo}#${a.number}: ${a.skip}`) };
   console.log(JSON.stringify(result, null, 2));
 }
