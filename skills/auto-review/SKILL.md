@@ -18,7 +18,8 @@ selects, prepares and posts, so what reaches GitHub is decided in code, never wr
 Eduardo's account: the only GitHub writes of a run are the `post` step's, and a run approves nothing, ever.
 
 `S` below is `C:/Users/U005017/.claude/skills/auto-review`. Run every command with absolute paths from where you are;
-your own shell stays out of the review worktrees (`C:/git/ar-model`, `C:/git/ar-mx`, `C:/git/ar-mql`): the read-only hook guards them.
+your own shell stays out of the review worktrees (`C:/git/ar-model`, `C:/git/ar-mx`, `C:/git/ar-mql`, and their
+`-2`, `-3`… slots): the read-only hook guards them.
 
 **Dry run** (`dry-run` in the args): the whole run, with `post --dry-run`, which prints what it would post. Nothing
 reaches GitHub. PRs named in the args are reviewed even when selection would skip them (`candidates --force`).
@@ -28,22 +29,26 @@ reaches GitHub. PRs named in the args are reviewed even when selection would ski
 1. `node $S/auto-review.mjs lock`. Exit 3 means another run holds it: end the run with that one line.
 2. `node $S/auto-review.mjs candidates [--force <PRs from the args>]`. It prints `due` (at most 3 a run, follow-up rounds first, then PRs
    requesting Eduardo, then newest first), `deferred` (next hour) and `skipped` with why: a head already reviewed, a draft, or a head whose only change
-   since the reviewed one is a clean merge of the base. Nothing due → step 5.
-3. Each due PR, one at a time:
-   1. `node $S/auto-review.mjs prepare <repo>#<n> <round> <lastHead or ->` prints the **run dir**: `pr.json`,
-      `diff.patch`, `delta.patch` (later rounds), `threads.json`, `conversation.json`, `checks.txt`, `overlaps.json`.
-      The PR's head is checked out detached in `pr.json`'s `worktree`.
-   2. Reviewer: `Agent` (general-purpose), prompt: "Read `$S/reviewer.md` and follow it. Run dir: <dir>." Done when
-      `<dir>/verdict.json` exists.
-   3. Verifier: `Agent` (general-purpose), prompt: "Read `$S/verifier.md` and follow it. Run dir: <dir>." Pass
-      `effort: "max"` when `verdict.json` has a reply with `"rebuttal": true` (a rebuttal is re-checked at a higher
-      effort). Done when `<dir>/verified.json` exists.
-   4. `node $S/auto-review.mjs post <dir>` (`--dry-run` in a dry run). It applies the last-round rule, drops re-raised
-      Minor/Nit and replies outside Eduardo's own threads, renders the fixed templates, and posts one COMMENTED review
-      (inline findings) or one comment (nothing to anchor), each carrying the head marker. A malformed `verified.json`
-      fails here: send the error to the verifier (SendMessage) to fix, then post again.
+   since the reviewed one is a clean merge of the base, and `slots`, how many PRs are reviewed at once (3;
+   `AUTO_REVIEW_SLOTS`). Nothing due → step 5.
+3. The due PRs in batches of `slots`, in `due`'s order. Each batch:
+   1. Each PR of the batch, one after the other: `node $S/auto-review.mjs prepare <repo>#<n> <round> <lastHead or ->
+      <slot>`, the slot its position in the batch (1, 2, 3…), so no two PRs of a batch share a worktree. It prints the
+      **run dir**: `pr.json`, `diff.patch`, `delta.patch` (later rounds), `threads.json`, `conversation.json`,
+      `checks.txt`, `overlaps.json`. The PR's head is checked out detached in `pr.json`'s `worktree`.
+   2. Reviewers: one message with an `Agent` call (general-purpose) per prepared PR, so they run at once, prompt: "Read
+      `$S/reviewer.md` and follow it. Run dir: <dir>." Wait until each `<dir>/verdict.json` exists or its agent ended.
+   3. Verifiers: one message with an `Agent` call (general-purpose) per PR that has its `verdict.json`, prompt: "Read
+      `$S/verifier.md` and follow it. Run dir: <dir>." Pass `effort: "max"` on a PR whose `verdict.json` has a reply
+      with `"rebuttal": true` (a rebuttal is re-checked at a higher effort). Wait until each `<dir>/verified.json`
+      exists or its agent ended.
+   4. Each PR with its `verified.json`, one after the other: `node $S/auto-review.mjs post <dir>` (`--dry-run` in a dry
+      run). It applies the last-round rule, drops re-raised Minor/Nit and replies outside Eduardo's own threads, renders
+      the fixed templates, and posts one COMMENTED review (inline findings) or one comment (nothing to anchor), each
+      carrying the head marker. A malformed `verified.json` fails here: send the error to that PR's verifier
+      (SendMessage) to fix, then post again.
    A PR whose step fails (build, fetch, a subagent ending without its file) is reported and left for the next run; the
-   next PR goes on.
+   other PRs go on.
 4. Between PRs, nothing carries over: each subagent starts fresh from its brief.
 5. `node $S/auto-review.mjs unlock`, then report one line per PR: posted (url), would post (`<dir>/post.md`), skipped
    (why) or failed (why).

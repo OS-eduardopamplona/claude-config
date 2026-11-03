@@ -16,6 +16,7 @@ const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_PER_RUN = 3;
 const LAST_ROUND = 3;
 const STALE_DAYS = 7;
+const SLOTS = Number(process.env.AUTO_REVIEW_SLOTS ?? 3);
 const GITVERSION = "GitVersion.yml";
 const GITVERSION_DAYS = 14;
 const FOOTER = "— Automated review by Claude";
@@ -117,7 +118,7 @@ function candidates(args) {
     catch (e) { return { repo: p.repo, number: p.number, skip: `assessment failed, retried next run: ${String(e.message).split(/\r?\n/)[0]}` }; }
   });
   const due = assessed.filter((a) => !a.skip).sort((a, b) => (b.round > 1) - (a.round > 1));
-  const result = { due: explicit.length ? due : due.slice(0, MAX_PER_RUN), deferred: explicit.length ? [] : due.slice(MAX_PER_RUN).map((a) => `${a.repo}#${a.number}`), skipped: assessed.filter((a) => a.skip).map((a) => `${a.repo}#${a.number}: ${a.skip}`) };
+  const result = { slots: SLOTS, due: explicit.length ? due : due.slice(0, MAX_PER_RUN), deferred: explicit.length ? [] : due.slice(MAX_PER_RUN).map((a) => `${a.repo}#${a.number}`), skipped: assessed.filter((a) => a.skip).map((a) => `${a.repo}#${a.number}: ${a.skip}`) };
   console.log(JSON.stringify(result, null, 2));
 }
 
@@ -149,6 +150,8 @@ function overlaps(repo, clone, number, head, files) {
     });
 }
 
+const worktreeOf = (repo, slot) => (slot > 1 ? `${REPOS[repo].worktree}-${slot}` : REPOS[repo].worktree);
+
 function restoreGitVersion(worktree) {
   if (!fs.existsSync(path.join(worktree, GITVERSION))) return;
   tryRun("git", ["update-index", "--no-skip-worktree", GITVERSION], { cwd: worktree });
@@ -167,9 +170,12 @@ function shortenGitVersion(worktree) {
 }
 
 function prepare(args) {
-  const [arg, roundArg, lastHeadArg] = args;
+  const [arg, roundArg, lastHeadArg, slotArg] = args;
   const { repo, number } = parsePrArg(arg);
-  const { clone, worktree } = REPOS[repo];
+  const slot = Number(slotArg ?? 1);
+  if (!(slot >= 1 && slot <= SLOTS)) throw new Error(`slot ${slotArg}: 1 to ${SLOTS}`);
+  const { clone } = REPOS[repo];
+  const worktree = worktreeOf(repo, slot);
   const pr = ghJson("pr", "view", String(number), "-R", repo, "--json", "number,title,url,body,author,headRefOid,headRefName,baseRefName,files,commits");
   const head = fetchPr(clone, number, pr.baseRefName);
   if (head !== pr.headRefOid) throw new Error(`fetched ${short(head)} but the PR's head is ${short(pr.headRefOid)}; rerun`);
@@ -379,7 +385,7 @@ function lock() {
 const [verb, ...rest] = process.argv.slice(2);
 const verbs = { lock, unlock: () => fs.rmSync(LOCK, { force: true }), candidates, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))) };
 if (!verbs[verb]) {
-  console.error("usage: auto-review.mjs lock | unlock | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> | post <run dir> [--dry-run]");
+  console.error("usage: auto-review.mjs lock | unlock | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run]");
   process.exit(2);
 }
 try {

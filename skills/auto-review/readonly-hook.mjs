@@ -14,7 +14,7 @@ const DENY = [
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
 const command = String(input.tool_input?.command ?? "");
 const cwd = String(input.cwd ?? "").replace(/\\/g, "/");
-const inReview = /^(\/c|c:)?\/git\/ar-(model|mx|mql)(\/|$)/i.test(cwd) || REVIEW_TREE.test(command);
+const inReview = /^(\/c|c:)?\/git\/ar-(model|mx|mql)(-\d+)?(\/|$)/i.test(cwd) || REVIEW_TREE.test(command);
 const hit = inReview && DENY.find(([re]) => re.test(command));
 if (hit) {
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `auto-review is read-only: ${hit[1]} (${command.slice(0, 100)})` } }));
