@@ -16,6 +16,8 @@ const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_PER_RUN = 3;
 const LAST_ROUND = 3;
 const STALE_DAYS = 7;
+const GITVERSION = "GitVersion.yml";
+const GITVERSION_DAYS = 14;
 const FOOTER = "— Automated review by Claude";
 const MARKER = /<!-- auto-review head=([0-9a-f]{40}) round=(\d+) -->/g;
 const REPLY_MARKER = (kind) => `<!-- auto-review reply=${kind} -->`;
@@ -147,6 +149,23 @@ function overlaps(repo, clone, number, head, files) {
     });
 }
 
+function restoreGitVersion(worktree) {
+  if (!fs.existsSync(path.join(worktree, GITVERSION))) return;
+  tryRun("git", ["update-index", "--no-skip-worktree", GITVERSION], { cwd: worktree });
+  tryRun("git", ["checkout", "--", GITVERSION], { cwd: worktree });
+}
+
+function shortenGitVersion(worktree) {
+  const file = path.join(worktree, GITVERSION);
+  if (!fs.existsSync(file)) return;
+  const since = new Date(Date.now() - GITVERSION_DAYS * 864e5).toISOString().slice(0, 10);
+  const text = fs.readFileSync(file, "utf8");
+  const shortened = text.replace(/^(\s*commits-before:\s*)\d{4}-\d{2}-\d{2}/m, `$1${since}`);
+  if (shortened === text) return;
+  fs.writeFileSync(file, shortened);
+  git(worktree, "update-index", "--skip-worktree", GITVERSION);
+}
+
 function prepare(args) {
   const [arg, roundArg, lastHeadArg] = args;
   const { repo, number } = parsePrArg(arg);
@@ -156,9 +175,11 @@ function prepare(args) {
   if (head !== pr.headRefOid) throw new Error(`fetched ${short(head)} but the PR's head is ${short(pr.headRefOid)}; rerun`);
   if (!fs.existsSync(path.join(worktree, ".git"))) git(clone, "worktree", "add", "--detach", worktree, head);
   else {
+    restoreGitVersion(worktree);
     git(worktree, "checkout", "--quiet", "--force", "--detach", head);
     git(worktree, "clean", "-fdqx", "-e", "bin/", "-e", "obj/", "-e", "node_modules/");
   }
+  shortenGitVersion(worktree);
   const mergeBase = git(clone, "merge-base", `origin/${pr.baseRefName}`, head);
   const round = Number(roundArg ?? 1);
   const lastHead = lastHeadArg && lastHeadArg !== "-" ? lastHeadArg : null;
