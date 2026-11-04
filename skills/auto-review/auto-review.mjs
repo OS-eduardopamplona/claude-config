@@ -171,6 +171,7 @@ function shortenGitVersion(worktree) {
 }
 
 function prepare(args) {
+  if (fs.existsSync(LOCK)) fs.writeFileSync(LOCK, JSON.stringify({ ...JSON.parse(fs.readFileSync(LOCK, "utf8")), at: Date.now() }));
   const [arg, roundArg, lastHeadArg, slotArg] = args;
   const { repo, number } = parsePrArg(arg);
   const slot = Number(slotArg ?? 1);
