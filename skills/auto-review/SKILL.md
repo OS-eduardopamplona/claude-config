@@ -21,6 +21,9 @@ Eduardo's account: the only GitHub writes of a run are the `post` step's, and a 
 your own shell stays out of the review worktrees (`C:/git/ar-model`, `C:/git/ar-mx`, `C:/git/ar-mql`, and their
 `-2`, `-3`… slots): the read-only hook guards them.
 
+The run is headless: it exits when your turn ends, killing every agent and command still running. Run every command
+and agent in the foreground, and end your turn only after step 5.
+
 **No red/green** (`no-red-green` in the args): every reviewer prompt ends with "No red/green." The authors ran it.
 
 **Dry run** (`dry-run` in the args): the whole run, with `post --dry-run`, which prints what it would post. Nothing
@@ -38,9 +41,9 @@ reaches GitHub. PRs named in the args are reviewed even when selection would ski
       <slot>`, the slot its position in the batch (1, 2, 3…), so no two PRs of a batch share a worktree. It prints the
       **run dir**: `pr.json`, `diff.patch`, `delta.patch` (later rounds), `threads.json`, `conversation.json`,
       `checks.txt`, `overlaps.json`. The PR's head is checked out detached in `pr.json`'s `worktree`.
-   2. Reviewers: one message with an `Agent` call (general-purpose) per prepared PR, so they run at once, prompt: "Read
+   2. Reviewers: one message with an `Agent` call (general-purpose, `run_in_background: false`) per prepared PR, so they run at once and the message returns when all have ended, prompt: "Read
       `$S/reviewer.md` and follow it. Run dir: <dir>." Wait until each `<dir>/verdict.json` exists or its agent ended.
-   3. Verifiers: one message with an `Agent` call (general-purpose) per PR that has its `verdict.json`, prompt: "Read
+   3. Verifiers: one message with an `Agent` call (general-purpose, `run_in_background: false`) per PR that has its `verdict.json`, prompt: "Read
       `$S/verifier.md` and follow it. Run dir: <dir>." Pass `effort: "max"` on a PR whose `verdict.json` has a reply
       with `"rebuttal": true` (a rebuttal is re-checked at a higher effort). Wait until each `<dir>/verified.json`
       exists or its agent ended.
