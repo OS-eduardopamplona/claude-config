@@ -21,6 +21,8 @@ Eduardo's account: the only GitHub writes of a run are the `post` step's, and a 
 your own shell stays out of the review worktrees (`C:/git/ar-model`, `C:/git/ar-mx`, `C:/git/ar-mql`, and their
 `-2`, `-3`… slots): the read-only hook guards them.
 
+**No red/green** (`no-red-green` in the args): every reviewer prompt ends with "No red/green." The authors ran it.
+
 **Dry run** (`dry-run` in the args): the whole run, with `post --dry-run`, which prints what it would post. Nothing
 reaches GitHub. PRs named in the args are reviewed even when selection would skip them (`candidates --force`).
 

@@ -25,6 +25,7 @@ findings only on lines the delta changed; a doubt elsewhere goes in `notes`.
    that stays green is **vacuous**: a 🟠 Major, CONFIRMED. A test that fails only to compile without the change is red
    when the change adds the API it calls. Later rounds rerun this only when the delta touches tests or product code.
    No test for a behaviour change is a finding of its own (Major when the change fixes a bug).
+   When your prompt says "No red/green", skip the runs of this step, and build (step 1) only once a probe needs it.
 3. **Merges.** For each commit in `merges`, `git show --remerge-diff <sha>` shows its conflict resolutions; check those
    touching the PR's files. `overlaps.json` lists other open PRs sharing files, with the files `git merge-tree`
    conflicts on: name semantic clashes in `notes`.
