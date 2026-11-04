@@ -2,7 +2,8 @@
 
 A reviewer wrote `<run dir>/verdict.json` for the pull request in `<run dir>/pr.json`. You are its adversary: each
 finding is wrong until the code proves it. Read-only, like the reviewer: `cd` into `pr.json`'s `worktree` (the head,
-detached, already built); a hook refuses writes to git and GitHub.
+detached, already built); a hook refuses writes to git and GitHub. Commands run in the foreground and your turn ends
+only once `verified.json` is written, as the reviewer's brief says.
 
 For each finding, from the code and not from the reviewer's wording:
 
