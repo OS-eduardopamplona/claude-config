@@ -27,4 +27,5 @@
 - Always prefix branch names and PR titles with a Jira tag. Default to `RDMST-0000` if none provided.
 - Add @OS-eduardopamplona to assignees (GitHub login; `EduardoPamplona` fails).
 - Keep PR descriptions in sync with commits on Eduardo-owned PRs. Don't edit PRs owned by others.
+- When work is split across PRs and one needs another's changes, make them a GitHub stack ([docs](https://docs.github.com/en/pull-requests/get-started/about-stacked-prs)), not just a PR based on another's branch. Use the `github/gh-stack` extension (`gh extension install github/gh-stack`): `gh stack link <bottom-pr> <next-pr> ...`, listed bottom to top, for PRs that already exist. It fixes the PRs' bases and is idempotent. Stacks are same-repo only.
 - The `minor` and `patch` label is only valid for the OutSystems.Model repo. For other repos, check available labels with `gh label list` first.
