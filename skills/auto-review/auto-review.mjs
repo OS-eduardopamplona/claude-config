@@ -148,6 +148,14 @@ function candidates(args) {
   console.log(JSON.stringify(result, null, 2));
 }
 
+function next(args) {
+  const i = args.indexOf("--exclude");
+  const excluded = new Set(i >= 0 ? fs.readFileSync(args[i + 1], "utf8").split(/\s+/).filter(Boolean) : []);
+  const { due } = select([]);
+  for (const a of due.filter((a) => !excluded.has(`${a.repo}#${a.number}@${a.head}`)).slice(0, MAX_PER_RUN))
+    console.log(`${a.repo}#${a.number} ${a.head}`);
+}
+
 function threadsOf(repo, number) {
   const { owner, name } = split(repo);
   const query = `query($o:String!,$r:String!,$n:Int!,$endCursor:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:50,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path line originalLine comments(first:50){nodes{databaseId author{login} body createdAt}}}}}}}`;
@@ -414,9 +422,10 @@ async function notifyReady(p) {
   }
 }
 
-function lock() {
+function lock(args = []) {
+  if (process.env.AUTO_REVIEW_LOCKED) return console.log("run.sh holds the lock");
   fs.mkdirSync(HOME, { recursive: true });
-  if (fs.existsSync(LOCK)) {
+  if (fs.existsSync(LOCK) && !args.includes("--renew")) {
     const held = JSON.parse(fs.readFileSync(LOCK, "utf8"));
     if (Date.now() - held.at < LOCK_TTL_MS) {
       console.error(`another run holds the lock since ${new Date(held.at).toISOString()}`);
@@ -427,9 +436,9 @@ function lock() {
 }
 
 const [verb, ...rest] = process.argv.slice(2);
-const verbs = { lock, unlock: () => fs.rmSync(LOCK, { force: true }), candidates, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])) };
+const verbs = { lock, unlock: () => process.env.AUTO_REVIEW_LOCKED || fs.rmSync(LOCK, { force: true }), candidates, next, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])) };
 if (!verbs[verb]) {
-  console.error("usage: auto-review.mjs lock | unlock | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run] | notify <run dir>");
+  console.error("usage: auto-review.mjs lock [--renew] | unlock | next [--exclude <file>] | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run] | notify <run dir>");
   process.exit(2);
 }
 try {
