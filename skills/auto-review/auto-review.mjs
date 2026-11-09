@@ -12,6 +12,7 @@ const REPOS = {
 };
 const HOME = path.join(os.homedir(), ".claude", "auto-review");
 const LOCK = path.join(HOME, "lock.json");
+const WEBHOOK_FILE = path.join(HOME, "slack-webhook.txt");
 const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_PER_RUN = 3;
 const LAST_ROUND = 3;
@@ -329,7 +330,7 @@ function plan(dir) {
     marker,
   ].join("\n");
   const kind = inline.length ? "review" : "comment";
-  return { meta, kind, body, inline: inline.map((f) => ({ path: f.file, line: f.line, side: "RIGHT", body: renderFinding(f) })), replies, dropped };
+  return { meta, kind, body, ready: !blocking.length, tally, inline: inline.map((f) => ({ path: f.file, line: f.line, side: "RIGHT", body: renderFinding(f) })), replies, dropped };
 }
 
 function renderPlan(p) {
@@ -340,7 +341,7 @@ function renderPlan(p) {
   return out.join("\n");
 }
 
-function post(args) {
+async function post(args) {
   const dir = args.find((a) => !a.startsWith("--"));
   const dry = args.includes("--dry-run") || process.env.AUTO_REVIEW_DRY_RUN === "1";
   const p = plan(dir);
@@ -370,6 +371,23 @@ function post(args) {
     const res = JSON.parse(gh("api", "--method", "POST", `repos/${repo}/issues/${number}/comments`, "--input", payload));
     console.log(res.html_url);
   }
+  if (p.ready) await notifyReady(p);
+}
+
+async function notifyReady(p) {
+  if (!fs.existsSync(WEBHOOK_FILE)) return console.log(`no ${WEBHOOK_FILE}: Slack not notified`);
+  const { repo, number, round, title, url } = p.meta;
+  const summary = `Round ${round}: no blocking issues${p.tally ? ` (${p.tally}, the author decides)` : ""}.`;
+  try {
+    const res = await fetch(fs.readFileSync(WEBHOOK_FILE, "utf8").trim(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repo, pr: String(number), title: title ?? "", url: url ?? `https://github.com/${repo}/pull/${number}`, summary }),
+    });
+    console.log(res.ok ? "Slack notified" : `Slack webhook answered ${res.status}: ${await res.text()}`);
+  } catch (e) {
+    console.log(`Slack webhook failed: ${e.message}`);
+  }
 }
 
 function lock() {
@@ -385,13 +403,13 @@ function lock() {
 }
 
 const [verb, ...rest] = process.argv.slice(2);
-const verbs = { lock, unlock: () => fs.rmSync(LOCK, { force: true }), candidates, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))) };
+const verbs = { lock, unlock: () => fs.rmSync(LOCK, { force: true }), candidates, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])) };
 if (!verbs[verb]) {
-  console.error("usage: auto-review.mjs lock | unlock | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run]");
+  console.error("usage: auto-review.mjs lock | unlock | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run] | notify <run dir>");
   process.exit(2);
 }
 try {
-  verbs[verb](rest);
+  await verbs[verb](rest);
 } catch (e) {
   console.error(e.stderr ? `${e.message}\n${e.stderr}` : e.message);
   process.exit(1);

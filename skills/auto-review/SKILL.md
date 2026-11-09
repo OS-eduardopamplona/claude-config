@@ -50,7 +50,8 @@ reaches GitHub. PRs named in the args are reviewed even when selection would ski
    4. Each PR with its `verified.json`, one after the other: `node $S/auto-review.mjs post <dir>` (`--dry-run` in a dry
       run). It applies the last-round rule, drops re-raised Minor/Nit and replies outside Eduardo's own threads, renders
       the fixed templates, and posts one COMMENTED review (inline findings) or one comment (nothing to anchor), each
-      carrying the head marker. A malformed `verified.json` fails here: send the error to that PR's verifier
+      carrying the head marker. A round with nothing blocking also DMs Eduardo through the Slack
+      workflow whose webhook URL is in `~/.claude/auto-review/slack-webhook.txt` (no file, no DM). A malformed `verified.json` fails here: send the error to that PR's verifier
       (SendMessage) to fix, then post again.
    A PR whose step fails (build, fetch, a subagent ending without its file) is reported and left for the next run; the
    other PRs go on.
