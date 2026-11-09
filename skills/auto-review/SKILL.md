@@ -33,7 +33,8 @@ reaches GitHub. PRs named in the args are reviewed even when selection would ski
 
 1. `node $S/auto-review.mjs lock`. Exit 3 means another run holds it: end the run with that one line.
 2. `node $S/auto-review.mjs candidates [--force <PRs from the args>]`. It prints `due` (PRs named in the args in
-   their order; otherwise at most 3 a run, follow-up rounds first, then PRs requesting Eduardo, then newest first), `deferred` (next hour) and `skipped` with why: a head already reviewed, a draft, or a head whose only change
+   their order; otherwise at most 3 a run: PRs requesting Eduardo, then the others, follow-up rounds before first ones in
+   each, rounds past the last one at the end, newest first within each), `deferred` (next hour) and `skipped` with why: a head already reviewed, a draft, or a head whose only change
    since the reviewed one is a clean merge of the base, and `slots`, how many PRs are reviewed at once (3;
    `AUTO_REVIEW_SLOTS`). Nothing due → step 5.
 3. The due PRs in batches of `slots`, in `due`'s order. Each batch:

@@ -17,6 +17,7 @@ const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_PER_RUN = 3;
 const LAST_ROUND = 3;
 const STALE_DAYS = 7;
+const SEARCH_LIMIT = 500;
 const SLOTS = Number(process.env.AUTO_REVIEW_SLOTS ?? 3);
 const GITVERSION = "GitVersion.yml";
 const GITVERSION_DAYS = 14;
@@ -78,9 +79,27 @@ function ownPatchId(clone, base, sha) {
   return run("git", ["patch-id", "--stable"], { cwd: clone, input: patch }).split(" ")[0];
 }
 
+function onlyCleanMerges(clone, base, lastHead, head) {
+  if (tryRun("git", ["merge-base", "--is-ancestor", lastHead, head], { cwd: clone }).code !== 0) return false;
+  const added = git(clone, "rev-list", head, `^${lastHead}`, `^origin/${base}`).split("\n").filter(Boolean);
+  return added.length > 0 && added.every((sha) => {
+    const [, ...parents] = git(clone, "rev-list", "--parents", "-n", "1", sha).split(" ");
+    if (parents.length !== 2) return false;
+    const merged = tryRun("git", ["merge-tree", "--write-tree", ...parents], { cwd: clone });
+    return merged.code === 0 && merged.out.trim() === git(clone, "rev-parse", `${sha}^{tree}`);
+  });
+}
+
 function searchPrs(query) {
   const since = new Date(Date.now() - STALE_DAYS * 864e5).toISOString().slice(0, 10);
-  return ghJson("search", "prs", "--state", "open", ...Object.keys(REPOS).flatMap((r) => ["--repo", r]), "--json", "number,repository,isDraft,author,updatedAt", "--limit", "100", "--", ...`${query} updated:>=${since} -author:app/dependabot -author:app/github-actions`.split(" "));
+  const prs = ghJson("search", "prs", "--state", "open", ...Object.keys(REPOS).flatMap((r) => ["--repo", r]), "--json", "number,repository,isDraft,author,updatedAt", "--limit", String(SEARCH_LIMIT), "--", ...`${query} draft:false updated:>=${since} -author:${ME} -author:app/dependabot -author:app/github-actions`.split(" "));
+  if (prs.length >= SEARCH_LIMIT) console.error(`search "${query}" hit its limit of ${SEARCH_LIMIT}: PRs past it are not seen`);
+  return prs;
+}
+
+function priority(a) {
+  if (a.round > LAST_ROUND) return 4;
+  return (a.requested ? 0 : 2) + (a.round > 1 ? 0 : 1);
 }
 
 function assess(repo, number, { force = false } = {}) {
@@ -95,14 +114,14 @@ function assess(repo, number, { force = false } = {}) {
   else if (last) {
     const { clone } = REPOS[repo];
     const head = fetchPr(clone, number, pr.baseRefName);
-    if (hasCommit(clone, last.head) && ownPatchId(clone, pr.baseRefName, last.head) === ownPatchId(clone, pr.baseRefName, head))
+    if (hasCommit(clone, last.head) && (onlyCleanMerges(clone, pr.baseRefName, last.head, head) || ownPatchId(clone, pr.baseRefName, last.head) === ownPatchId(clone, pr.baseRefName, head)))
       out.skip = `only a clean merge of ${pr.baseRefName} since ${short(last.head)}`;
   }
   if (force && out.skip && !/^state /.test(out.skip)) out.forced = out.skip, out.skip = null;
   return out;
 }
 
-function candidates(args) {
+function select(args) {
   const force = args.includes("--force");
   const explicit = args.filter((a) => !a.startsWith("--")).map(parsePrArg);
   let picked = explicit;
@@ -111,16 +130,21 @@ function candidates(args) {
     const requestedKeys = new Set(searchPrs("user-review-requested:@me").map(key));
     picked = searchPrs("is:pr")
       .filter((p) => !p.isDraft && p.author?.login !== ME && !p.author?.is_bot && !String(p.author?.login).startsWith("app/"))
-      .sort((a, b) => requestedKeys.has(key(b)) - requestedKeys.has(key(a)) || b.updatedAt.localeCompare(a.updatedAt))
-      .map((p) => ({ repo: p.repository.nameWithOwner, number: p.number }));
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, requested: requestedKeys.has(key(p)) }));
   }
   const assessed = picked.map((p) => {
-    try { return assess(p.repo, p.number, { force }); }
+    try { return { ...assess(p.repo, p.number, { force }), requested: p.requested }; }
     catch (e) { return { repo: p.repo, number: p.number, skip: `assessment failed, retried next run: ${String(e.message).split(/\r?\n/)[0]}` }; }
   });
   const due = assessed.filter((a) => !a.skip);
-  if (!explicit.length) due.sort((a, b) => (b.round > 1) - (a.round > 1));
-  const result = { slots: SLOTS, due: explicit.length ? due : due.slice(0, MAX_PER_RUN), deferred: explicit.length ? [] : due.slice(MAX_PER_RUN).map((a) => `${a.repo}#${a.number}`), skipped: assessed.filter((a) => a.skip).map((a) => `${a.repo}#${a.number}: ${a.skip}`) };
+  if (!explicit.length) due.sort((a, b) => priority(a) - priority(b));
+  return { explicit: explicit.length > 0, due, skipped: assessed.filter((a) => a.skip).map((a) => `${a.repo}#${a.number}: ${a.skip}`) };
+}
+
+function candidates(args) {
+  const { explicit, due, skipped } = select(args);
+  const result = { slots: SLOTS, due: explicit ? due : due.slice(0, MAX_PER_RUN), deferred: explicit ? [] : due.slice(MAX_PER_RUN).map((a) => `${a.repo}#${a.number}`), skipped };
   console.log(JSON.stringify(result, null, 2));
 }
 
