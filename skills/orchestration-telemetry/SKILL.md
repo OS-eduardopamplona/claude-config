@@ -47,7 +47,7 @@ Done when the publish returns a new version and every ticket worked since `--sin
 
 ## When the export stops
 
-- The sampler runs inside the receiver and never counts its own CPU against a session. A sampler error lands in `telemetry/otel/receiver.log`; `python ~/.claude/telemetry-tools/resource_sampler.py --once` checks it by hand.
+- The sampler runs inside the receiver and never counts its own CPU against a session (about 50 ms of CPU per 15 s). Once a day it deletes `resources/samples-*` and `otel/*-<date>.jsonl` older than 90 days and `pids/` files untouched for 30 days. A sampler error lands in `telemetry/otel/receiver.log`; `python ~/.claude/telemetry-tools/resource_sampler.py --once` checks it by hand.
 - `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:14318/health` answers 200 while the receiver runs; otherwise start the Startup shortcut again. Ports 4317/4318 belong to the os-ts Aspire containers, hence 14318.
 - Only sessions started after the `env` change export. `claude -p` with an expired login exports startup events but no `api_request`.
 - On Windows, `subprocess` needs `shutil.which` to find `az` (`az.cmd`).

@@ -11,11 +11,14 @@ import threading
 import time
 import traceback
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path.home() / ".claude" / "telemetry"
 PIDS = ROOT / "pids"
+RETAIN_DAYS = 90
+PID_RETAIN_DAYS = 30
+DATED = re.compile(r"-(\d{4}-\d{2}-\d{2})\.jsonl$")
 OUT = ROOT / "resources"
 LOG = ROOT / "otel" / "receiver.log"
 SAMPLE_S = 15
@@ -708,9 +711,28 @@ class Sampler:
         return line
 
 
+def prune(today):
+    cutoff = (today - timedelta(days=RETAIN_DAYS)).isoformat()
+    removed = 0
+    for folder in (OUT, ROOT / "otel"):
+        for f in folder.glob("*.jsonl"):
+            m = DATED.search(f.name)
+            if m and m.group(1) < cutoff:
+                f.unlink(missing_ok=True)
+                removed += 1
+    stale = time.time() - PID_RETAIN_DAYS * 86400
+    for f in PIDS.glob("*.json"):
+        if f.stat().st_mtime < stale:
+            f.unlink(missing_ok=True)
+            removed += 1
+    if removed:
+        log(f"pruned {removed} files older than retention")
+
+
 def run(stop_event, on_line=None, lines=None):
     sampler = Sampler()
     written = 0
+    pruned_on = None
     try:
         sampler.sample()
     except Exception:
@@ -726,6 +748,13 @@ def run(stop_event, on_line=None, lines=None):
             continue
         if sampler.n < SAMPLES_PER_LINE:
             continue
+        today = datetime.now(timezone.utc).date()
+        if today != pruned_on:
+            pruned_on = today
+            try:
+                prune(today)
+            except Exception:
+                log("prune failed", exc=True)
         try:
             line = sampler.flush()
         except Exception:
