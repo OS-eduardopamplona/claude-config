@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import threading
+import traceback
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -47,10 +48,26 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def start_sampler():
+    try:
+        import resource_sampler
+
+        resource_sampler.start(threading.Event())
+    except Exception:
+        try:
+            OUT.mkdir(parents=True, exist_ok=True)
+            with LOCK, open(OUT / "receiver.log", "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now(timezone.utc).isoformat(timespec='seconds')} sampler failed to start\n")
+                f.write(traceback.format_exc())
+        except OSError:
+            pass
+
+
 if __name__ == "__main__":
     try:
         server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     except OSError as e:
         print(f"port {PORT} unavailable: {e}", file=sys.stderr)
         sys.exit(1)
+    start_sampler()
     server.serve_forever()
