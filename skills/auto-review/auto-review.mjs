@@ -16,6 +16,7 @@ const WEBHOOK_FILE = path.join(HOME, "slack-webhook.txt");
 const ALERTED = path.join(HOME, "alerted.json");
 const ALERT_QUIET_MS = 4 * 60 * 60 * 1000;
 const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
+const MUTEX_STALE_MS = 10 * 60 * 1000;
 const MAX_PER_RUN = 3;
 const LAST_ROUND = 3;
 const STALE_DAYS = 7;
@@ -65,14 +66,34 @@ function markersOf(repo, number) {
     .sort((a, b) => a.round - b.round);
 }
 
+function exclusively(clone, fn) {
+  const mutex = path.join(HOME, `${path.basename(clone)}.mutex`);
+  for (;;) {
+    try {
+      fs.mkdirSync(mutex);
+      break;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      const age = Date.now() - (fs.statSync(mutex, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
+      if (age > MUTEX_STALE_MS) fs.rmSync(mutex, { recursive: true, force: true });
+      else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(mutex, { recursive: true, force: true });
+  }
+}
+
 function fetchPr(clone, number, base) {
-  git(clone, "fetch", "--quiet", "origin", base, `+refs/pull/${number}/head:refs/auto-review/pr-${number}`);
+  exclusively(clone, () => git(clone, "fetch", "--quiet", "origin", base, `+refs/pull/${number}/head:refs/auto-review/pr-${number}`));
   return git(clone, "rev-parse", `refs/auto-review/pr-${number}`);
 }
 
 function hasCommit(clone, sha) {
   if (tryRun("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: clone }).code === 0) return true;
-  return tryRun("git", ["fetch", "--quiet", "origin", sha], { cwd: clone }).code === 0;
+  return exclusively(clone, () => tryRun("git", ["fetch", "--quiet", "origin", sha], { cwd: clone })).code === 0;
 }
 
 function ownPatchId(clone, base, sha) {
@@ -216,7 +237,7 @@ function prepare(args) {
   const pr = ghJson("pr", "view", String(number), "-R", repo, "--json", "number,title,url,body,author,headRefOid,headRefName,baseRefName,files,commits");
   const head = fetchPr(clone, number, pr.baseRefName);
   if (head !== pr.headRefOid) throw new Error(`fetched ${short(head)} but the PR's head is ${short(pr.headRefOid)}; rerun`);
-  if (!fs.existsSync(path.join(worktree, ".git"))) git(clone, "worktree", "add", "--detach", worktree, head);
+  if (!fs.existsSync(path.join(worktree, ".git"))) exclusively(clone, () => git(clone, "worktree", "add", "--detach", worktree, head));
   else {
     restoreGitVersion(worktree);
     git(worktree, "checkout", "--quiet", "--force", "--detach", head);

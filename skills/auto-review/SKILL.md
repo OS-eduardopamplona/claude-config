@@ -26,6 +26,9 @@ and agent in the foreground, and end your turn only after step 5.
 
 **No red/green** (`no-red-green` in the args): every reviewer prompt ends with "No red/green." The authors ran it.
 
+**Slot** (`slot=<n>` in the args): `run.sh` starts one run per PR of a batch, all at once, so each posts when its own
+review is done. Pass `<n>` as the `prepare` slot instead of the PR's position.
+
 **Dry run** (`dry-run` in the args): the whole run, with `post --dry-run`, which prints what it would post. Nothing
 reaches GitHub. PRs named in the args are reviewed even when selection would skip them (`candidates --force`).
 
@@ -40,7 +43,8 @@ reaches GitHub. PRs named in the args are reviewed even when selection would ski
    `AUTO_REVIEW_SLOTS`). Nothing due → step 5.
 3. The due PRs in batches of `slots`, in `due`'s order. Each batch:
    1. Each PR of the batch, one after the other: `node $S/auto-review.mjs prepare <repo>#<n> <round> <lastHead or ->
-      <slot>`, the slot its position in the batch (1, 2, 3…), so no two PRs of a batch share a worktree. It prints the
+      <slot>`, the slot the args' `slot=<n>`, else its position in the batch (1, 2, 3…), so no two PRs of a batch
+      share a worktree. It prints the
       **run dir**: `pr.json`, `diff.patch`, `delta.patch` (later rounds), `threads.json`, `conversation.json`,
       `checks.txt`, `overlaps.json`. The PR's head is checked out detached in `pr.json`'s `worktree`.
    2. Reviewers: one message with an `Agent` call (general-purpose, `run_in_background: false`) per prepared PR, so they run at once and the message returns when all have ended, prompt: "Read
