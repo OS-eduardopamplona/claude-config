@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -26,6 +27,24 @@ PRICES = [
 
 TOKEN_FIELDS = ("input", "output", "thinking", "cache_read", "cache_write_5m", "cache_write_1h")
 IDLE_CAP_S = 300
+
+SHELL_TOOLS = {"Bash", "PowerShell"}
+FILE_TOOLS = {"Read", "Edit", "Write", "MultiEdit", "Grep", "Glob", "NotebookEdit"}
+SUBAGENT_TOOLS = {"Agent", "Task"}
+TOOL_CATEGORIES = ("build", "test", "node", "git", "remote", "other_shell", "subagent", "mcp", "file", "other")
+WORD = r"(?<![\w.\\/-])"
+COMMAND_CATEGORIES = [
+    ("test", re.compile(r"dotnet(\.exe)?\s+test\b|\b(npm|pnpm|yarn)\s+(run\s+)?test|\bvitest\b|\bplaywright\b|build\.ps1.*-target\s+tests?\b", re.I)),
+    ("build", re.compile(r"dotnet(\.exe)?\s+(build|msbuild|pack|publish)\b|" + WORD + r"msbuild(\.exe)?\s|build\.ps1|\bcake\b", re.I)),
+    ("node", re.compile(WORD + r"(npm|npx|pnpm|yarn|node)(\.exe|\.cmd)?\s", re.I)),
+    ("remote", re.compile(WORD + r"(gh|az)(\.exe|\.cmd)?\s+[a-z]|" + WORD + r"(curl|wget)(\.exe)?\s|invoke-(webrequest|restmethod)", re.I)),
+    ("git", re.compile(WORD + r"git(\.exe)?\s+-?[a-z]", re.I)),
+]
+NOTIFIED_TOOL = re.compile(r"<tool-use-id>(toolu_\w+)</tool-use-id>")
+CLOUD_ID = re.compile(r"session_01[A-Za-z0-9]{20,}")
+ABS_PATH = r"(?<![\w./\x5c])(?:[A-Za-z]:|/[a-zA-Z](?=/))[/\x5c]+[^\s\"'`;&|<>()*?]+"
+WORKING_PATH = re.compile(r"(?:\bcd\s+|\bpushd\s+|\s-C\s+|\bworktree\s+add\s+(?:[^\s;&|]+\s+)*?)[\"']?(" + ABS_PATH + ")", re.I)
+SHELL_FG_CAP_S = 610
 
 
 def price_of(model):
@@ -78,34 +97,168 @@ def transcripts(since, sessions):
         yield path
 
 
-def scan(since=None, sessions=None, until=None):
-    messages = {}
+def command_category(command):
+    for category, rx in COMMAND_CATEGORIES:
+        if rx.search(command):
+            return category
+    return "other_shell"
+
+
+def tool_category(name, inp):
+    if name in SHELL_TOOLS:
+        return command_category(inp.get("command") or "")
+    if name in SUBAGENT_TOOLS:
+        return "subagent"
+    if name.startswith("mcp__"):
+        return "mcp"
+    if name in FILE_TOOLS:
+        return "file"
+    return "other"
+
+
+def parse_ts(ts):
+    return datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
+
+
+def earliest(a, b):
+    return b if a is None or (b is not None and b < a) else a
+
+
+def scan_full(since=None, sessions=None, until=None):
+    messages, tools, activity, mentions, paths = {}, defaultdict(dict), defaultdict(set), {}, defaultdict(set)
+
+    def use_of(sid, tid):
+        return tools[sid].setdefault(tid, {"name": None, "category": None, "command": None, "bg": False,
+                                           "start": None, "result": None, "notified": None})
+
     for path in transcripts(since, sessions):
         sid = session_of(path)
         subagent = "subagents" in path.parts
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
-                if '"usage"' not in line or '"assistant"' not in line:
+                if line.startswith('{"type":"api-request'):
+                    continue
+                if '"user"' not in line and '"assistant"' not in line and "queue-operation" not in line:
                     continue
                 try:
                     d = json.loads(line)
                 except ValueError:
                     continue
+                kind = d.get("type")
+                try:
+                    when = parse_ts(d.get("timestamp"))
+                except ValueError:
+                    continue
+                if not when or (since and when < since) or (until and when >= until):
+                    continue
+                if kind == "queue-operation":
+                    if d.get("operation") == "enqueue":
+                        for tid in NOTIFIED_TOOL.findall(d.get("content") or ""):
+                            u = use_of(sid, tid)
+                            u["notified"] = earliest(u["notified"], when)
+                    continue
+                if kind not in ("user", "assistant"):
+                    continue
+                activity[sid].add(int(when.timestamp() // 60))
+                if "session_01" in line:
+                    for cloud in set(CLOUD_ID.findall(line)):
+                        first, last = mentions.get(cloud, (when, when))
+                        mentions[cloud] = (min(first, when), max(last, when))
                 m = d.get("message") or {}
+                content = m.get("content")
+                if isinstance(content, list):
+                    for x in content:
+                        if not isinstance(x, dict):
+                            continue
+                        if x.get("type") == "tool_use" and x.get("id"):
+                            inp = x.get("input") or {}
+                            u = use_of(sid, x["id"])
+                            u["name"] = x.get("name") or ""
+                            u["category"] = tool_category(u["name"], inp)
+                            u["command"] = str(inp.get("command") or "") if u["name"] in SHELL_TOOLS else None
+                            u["bg"] = bool(inp.get("run_in_background"))
+                            u["start"] = earliest(u["start"], when)
+                            if u["command"]:
+                                paths[sid].update(WORKING_PATH.findall(u["command"]))
+                        elif x.get("type") == "tool_result" and x.get("tool_use_id"):
+                            u = use_of(sid, x["tool_use_id"])
+                            u["result"] = earliest(u["result"], when)
                 usage = m.get("usage")
                 model = m.get("model") or ""
-                if d.get("type") != "assistant" or not usage or model == "<synthetic>":
-                    continue
-                ts = d.get("timestamp")
-                when = datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
-                if when and ((since and when < since) or (until and when >= until)):
+                if kind != "assistant" or not usage or model == "<synthetic>":
                     continue
                 key = m.get("id") or d.get("requestId") or d.get("uuid")
                 messages[(sid, key)] = (sid, model, subagent, when, tokens_of(usage), d)
-    return messages.values()
+    return {"messages": list(messages.values()), "tools": tools, "activity": activity, "mentions": mentions,
+            "paths": paths}
 
 
-def aggregate(messages):
+def scan(since=None, sessions=None, until=None):
+    return scan_full(since, sessions, until)["messages"]
+
+
+def empty_tool_time():
+    return {
+        "by_category": {c: {"seconds": 0.0, "calls": 0, "bg_seconds": 0.0, "bg_calls": 0, "unfinished": 0, "capped": 0}
+                        for c in TOOL_CATEGORIES},
+        "longest": None,
+    }
+
+
+def tool_time(uses):
+    out = empty_tool_time()
+    for u in uses.values():
+        if not u["start"] or not u["category"]:
+            continue
+        c = out["by_category"][u["category"]]
+        end = u["notified"] if u["bg"] else u["result"]
+        c["bg_calls" if u["bg"] else "calls"] += 1
+        if not end:
+            c["unfinished"] += 1
+            continue
+        seconds = max((end - u["start"]).total_seconds(), 0.0)
+        capped = u["command"] is not None and not u["bg"] and seconds > SHELL_FG_CAP_S
+        if capped:
+            seconds = SHELL_FG_CAP_S
+            c["capped"] += 1
+        c["bg_seconds" if u["bg"] else "seconds"] += seconds
+        if u["command"] is not None and not capped and (out["longest"] is None or seconds > out["longest"]["seconds"]):
+            out["longest"] = {"category": u["category"], "seconds": round(seconds, 1),
+                              "command": " ".join(u["command"].split())[:80], "background": u["bg"]}
+    return finish_tool_time(out)
+
+
+def finish_tool_time(t):
+    for c in t["by_category"].values():
+        c["seconds"] = round(c["seconds"], 1)
+        c["bg_seconds"] = round(c["bg_seconds"], 1)
+    cats = t["by_category"].values()
+    t["background"] = {"calls": sum(c["bg_calls"] for c in cats), "seconds": round(sum(c["bg_seconds"] for c in cats), 1)}
+    t["unfinished"] = sum(c["unfinished"] for c in cats)
+    t["capped"] = sum(c["capped"] for c in cats)
+    return t
+
+
+def merge_tool_time(items):
+    out = empty_tool_time()
+    for t in items:
+        if not t:
+            continue
+        for cat, c in t["by_category"].items():
+            for k, v in c.items():
+                out["by_category"][cat][k] += v
+        if t.get("longest") and (out["longest"] is None or t["longest"]["seconds"] > out["longest"]["seconds"]):
+            out["longest"] = dict(t["longest"])
+    return finish_tool_time(out)
+
+
+def build_test_seconds(t):
+    if not t:
+        return 0.0
+    return sum(t["by_category"][c]["seconds"] + t["by_category"][c]["bg_seconds"] for c in ("build", "test"))
+
+
+def aggregate(messages, tools=None):
     rows = {}
     for sid, model, subagent, when, t, d in messages:
         r = rows.setdefault(sid, {
@@ -144,6 +297,8 @@ def aggregate(messages):
         r["first"] = r["first"].isoformat() if r["first"] else None
         r["last"] = r["last"].isoformat() if r["last"] else None
         r["cost_usd"] = round(r["cost_usd"], 4)
+        if tools is not None:
+            r["tool_time"] = tool_time(tools.get(r["session"], {}))
     return sorted(rows.values(), key=lambda r: r["first"] or "")
 
 
@@ -159,7 +314,8 @@ def main():
     ap.add_argument("--out", default=str(OUT_DIR / "sessions.json"))
     ap.add_argument("--csv", help="also write a flat CSV here")
     a = ap.parse_args()
-    rows = aggregate(scan(parse_date(a.since), set(a.session or []) or None, parse_date(a.until)))
+    found = scan_full(parse_date(a.since), set(a.session or []) or None, parse_date(a.until))
+    rows = aggregate(found["messages"], found["tools"])
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rows, indent=1), encoding="utf-8")

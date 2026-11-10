@@ -9,6 +9,36 @@ OUT_DIR = HOME / "telemetry" / "dashboard"
 TEMPLATE = Path(__file__).with_name("dashboard.html")
 
 
+def tool_hours(tt):
+    if not tt:
+        return None
+    return {k: {"fg": round(c["seconds"] / 3600, 2), "bg": round(c["bg_seconds"] / 3600, 2), "calls": c["calls"],
+                "bgCalls": c["bg_calls"], "capped": c.get("capped", 0), "unfinished": c["unfinished"]}
+            for k, c in tt["by_category"].items()}
+
+
+def resources(r):
+    if not r:
+        return None
+    return {"cpuH": r["cpu_hours"], "avgCores": r["avg_cores"], "peakRamGb": r["peak_rss_gb"],
+            "ioGb": round((r["io_read_gb"] or 0) + (r["io_write_gb"] or 0), 2), "sampledMin": r["sampled_min"],
+            "top": r["top"][:5]}
+
+
+def slim_capacity(c):
+    if not c:
+        return None
+    tt = c.get("tool_time") or {}
+    return {
+        "machine": c.get("machine"), "window": c.get("window"), "concurrency": c.get("concurrency"),
+        "cloudNote": c.get("cloud_activity"), "resources": c.get("resources"),
+        "familyResources": resources(c.get("family_resources")), "toolTime": tool_hours(tt),
+        "longest": tt.get("longest"), "background": tt.get("background"), "capped": tt.get("capped", 0),
+        "buildTestHours": c.get("build_test_hours"), "disk": c.get("worktree_disk_gb"),
+        "ciMinutes": c.get("ci_minutes_offloaded"), "sizing": c.get("sizing"),
+    }
+
+
 def slim(rollup):
     tickets = []
     for t in rollup["tickets"]:
@@ -19,6 +49,9 @@ def slim(rollup):
             "tokens": t["tokens"], "cost": t["cost_usd"], "active": t["active_min"], "wall": t["wall_hours"],
             "ciRuns": t["ci_runs"], "ciMin": t["ci_minutes"], "ciReruns": t["ci_reruns"], "ciFailed": t["ci_failed"],
             "reviews": t["review_rounds"],
+            "where": t.get("where") or {"local": t["sessions"], "cloud": t["cloud_sessions"]},
+            "buildTestMin": t.get("build_test_min"), "toolTime": tool_hours(t.get("tool_time")),
+            "res": resources(t.get("resources")), "disk": t.get("disk_gb"),
             "prs": [{
                 "ref": ("" if p["repo"].endswith("ModelExtensions") else p["repo"].split("/")[1].replace("OutSystems.", "")) + f"#{p['number']}",
                 "url": p.get("url"), "title": p.get("title"), "state": p.get("state"), "draft": p.get("draft"),
@@ -33,6 +66,7 @@ def slim(rollup):
         "generatedAt": rollup["generated_at"], "since": rollup.get("since"), "root": rollup["root"],
         "rootTitle": rollup.get("root_title"), "rootTicket": rollup.get("root_ticket"),
         "jiraFetchedAt": rollup.get("jira_fetched_at"), "gaps": rollup.get("gaps", []), "tickets": tickets,
+        "capacity": slim_capacity(rollup.get("capacity")),
     }
 
 

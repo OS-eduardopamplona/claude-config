@@ -64,7 +64,7 @@ section { display: grid; gap: 12px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 
 .scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); }
-table { width: 100%; border-collapse: collapse; min-width: 980px; }
+table { width: 100%; border-collapse: collapse; min-width: 1240px; }
 th, td { padding: 9px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: color-mix(in srgb, var(--cost) 5%, transparent); }
@@ -75,6 +75,7 @@ th[aria-sort] button { color: var(--ink); }
 th[aria-sort="descending"] button::after { content: " \2193"; }
 th[aria-sort="ascending"] button::after { content: " \2191"; }
 td.r, th.r { text-align: right; }
+td.num { white-space: nowrap; }
 .key { font: 500 13px/1.2 var(--mono); white-space: nowrap; }
 .sum { color: var(--ink-2); font-size: 12.5px; max-width: 38ch; margin-top: 2px; }
 .orch td { background: color-mix(in srgb, var(--ink) 3%, transparent); }
@@ -108,6 +109,31 @@ td.r, th.r { text-align: right; }
 .notes code { font: 400 12px/1.4 var(--mono); color: var(--ink); }
 .notes h3 { margin: 0; font: 500 11px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
 
+.spec { font: 400 12.5px/1.4 var(--mono); color: var(--ink-2); }
+.cap svg { display: block; width: 100%; min-width: 820px; height: auto; }
+.cap text { font-family: var(--mono); font-size: 11px; fill: var(--ink-2); }
+.cap .grid { stroke: var(--rule); stroke-width: 1; }
+.cap .p95 { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.cap .hit { fill: transparent; }
+.cap .hit:hover { fill: color-mix(in srgb, var(--ink) 9%, transparent); }
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.panel { background: var(--surface); border: 1px solid var(--rule); padding: 14px 16px; display: grid; gap: 10px; align-content: start; }
+.panel h3 { margin: 0; font: 500 11px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.tt { display: grid; grid-template-columns: minmax(84px, auto) 1fr auto; gap: 7px 12px; align-items: center; font-size: 12.5px; }
+.tt .t { height: 8px; background: var(--track); border-radius: 0 4px 4px 0; display: flex; gap: 2px; overflow: hidden; }
+.tt .f { height: 100%; }
+.tt .f:last-child { border-radius: 0 4px 4px 0; }
+.tt .n { font: 500 12.5px/1 var(--mono); font-variant-numeric: tabular-nums; text-align: right; min-width: 6ch; }
+.size { display: grid; gap: 10px; }
+.size .o { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; align-items: baseline; }
+.size .o .v { font: 500 20px/1.1 var(--mono); font-variant-numeric: tabular-nums; min-width: 7ch; }
+.size .o .k { font-size: 12.5px; color: var(--ink); }
+.size .o .s { grid-column: 2; font: 400 11px/1.3 var(--mono); color: var(--ink-3); }
+.inputs { display: grid; gap: 5px; font-size: 12.5px; color: var(--ink-2); border-top: 1px solid var(--rule); padding-top: 10px; }
+.inputs div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
+.facts { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--ink-2); font-size: 12.5px; }
+.facts .num { color: var(--ink); }
+
 #tip { position: fixed; pointer-events: none; z-index: 20; max-width: 300px; padding: 8px 10px; background: var(--ink); color: var(--plane); font: 400 12px/1.45 var(--body); border-radius: 4px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
 #tip b { font-weight: 600; }
 #tip .m { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -137,6 +163,25 @@ td.r, th.r { text-align: right; }
       <div class="legend"><span>One bar per local session, from its start to its last activity (UTC). Hover for its cost.</span></div>
     </div>
     <div class="scroll" id="tl"></div>
+  </section>
+
+  <section class="cap" id="capacity">
+    <div class="head">
+      <h2>Capacity</h2>
+      <div class="legend"><span>What a dedicated machine for these agents would have to hold.</span></div>
+    </div>
+    <div class="spec" id="cap-spec"></div>
+    <div class="strip" id="cap-strip" aria-label="Capacity totals"></div>
+    <div class="head">
+      <h3 class="eyebrow">Concurrent sessions per 5 minutes (UTC)</h3>
+      <div class="legend"><span><i style="background:var(--cost)"></i>Local, from transcript activity</span><span><i style="background:var(--review)"></i>Cloud, estimated first to last mention</span><span><i style="background:none;border-top:2px dashed var(--ink-2);border-radius:0;height:0;vertical-align:3px"></i>p95 local</span></div>
+    </div>
+    <div class="scroll" id="cap-chart"></div>
+    <div class="panels">
+      <div class="panel"><h3>Tool time by category, hours</h3><div class="legend"><span><i style="background:var(--ci)"></i>Build and test</span><span><i style="background:var(--ink-3)"></i>Everything else</span><span><i style="background:color-mix(in srgb, var(--ink-3) 40%, var(--surface))"></i>Lighter: background commands</span></div><div class="tt" id="cap-tools"></div><div class="sub" id="cap-tools-note"></div></div>
+      <div class="panel"><h3>Sizing one machine</h3><div class="size" id="cap-size"></div></div>
+      <div class="panel"><h3>Where the CPU went</h3><ul class="facts" id="cap-facts"></ul></div>
+    </div>
   </section>
 
   <section class="notes" id="notes"></section>
@@ -187,12 +232,35 @@ const cols = [
   ["cost", "Spend", t => t.cost, true],
   ["active", "Active h", t => t.active, true],
   ["wall", "Wall h", t => t.wall ?? 0, true],
+  ["where", "Where", t => (t.where?.cloud || 0) * 1e3 + (t.where?.local || 0), false],
+  ["buildTest", "Build+test h", t => t.buildTestMin ?? -1, true],
+  ["cpuH", "CPU h", t => t.res?.cpuH ?? -1, true],
+  ["peakRam", "Peak RAM", t => t.res?.peakRamGb ?? -1, true],
+  ["disk", "Disk", t => t.disk?.total ?? -1, true],
   ["ciMin", "CI min", t => t.ciMin, true],
   ["reviews", "Reviews", t => t.reviews, true],
   ["cycle", "Cycle d", t => t.cycle ?? -1, true],
   ["prs", "PRs", t => t.prs.length, false],
 ];
 let sortKey = "cost", sortDir = -1;
+const DASH = "—", NOT_MEASURED = "not measured yet";
+const CAT_NAMES = { build: "Build", test: "Test", node: "Node / npm", git: "git", remote: "gh, az, curl", other_shell: "Other shell", subagent: "Subagents", mcp: "MCP tools", file: "File tools", other: "Other tools" };
+const gbFmt = v => v == null ? DASH : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+function toolTip(title, tt) {
+  if (!tt) return `<b>${esc(title)}</b><br>No tool time in this roll-up`;
+  const lines = Object.entries(tt).filter(([, c]) => c.fg + c.bg > 0).sort((a, b) => (b[1].fg + b[1].bg) - (a[1].fg + a[1].bg))
+    .map(([k, c]) => `${esc(CAT_NAMES[k] || k)}: ${(c.fg + c.bg).toFixed(2)} h · ${c.calls + c.bgCalls} calls${c.bgCalls ? ` (${c.bgCalls} bg)` : ""}`);
+  return `<b>${esc(title)}</b><br><span class="m">${lines.join("<br>") || "no tool calls"}</span>`;
+}
+function resCells(t) {
+  const r = t.res;
+  if (!r) {
+    const tip = `<b>${esc(t.key)}</b><br>${NOT_MEASURED}: the resource sampler had no minute for these sessions`;
+    return `<td class="r num" data-tip="${esc(tip)}">${DASH}</td><td class="r num" data-tip="${esc(tip)}">${DASH}</td>`;
+  }
+  const tip = `<b>${esc(t.key)}, sampled</b><br><span class="m">${r.sampledMin} min sampled · avg ${r.avgCores} cores<br>${r.cpuH} CPU h · peak ${r.peakRamGb} GB RSS · ${r.ioGb} GB IO<br>${r.top.map(([e, s]) => `${esc(e)} ${s} CPU s`).join("<br>")}</span>`;
+  return `<td class="r num" data-tip="${esc(tip)}">${r.cpuH > 0 && r.cpuH < 0.01 ? "<0.01" : r.cpuH.toFixed(2)}<div class="sub">avg ${r.avgCores} cores</div></td><td class="r num" data-tip="${esc(tip)}">${gbFmt(r.peakRamGb)} GB<div class="sub">${r.sampledMin} min</div></td>`;
+}
 function row(t) {
   const tk = tokTotal(t.tokens);
   const costTip = `<b>${esc(t.key)}</b><br><span class="m">${usd(t.cost)} · ${t.requests} requests<br>${fmtN(tk)} tokens: ${fmtN(t.tokens.cache_read)} cache read, ${fmtN(t.tokens.cache_write_5m + t.tokens.cache_write_1h)} cache write, ${fmtN(t.tokens.output)} output, ${fmtN(t.tokens.input)} input</span>`;
@@ -207,6 +275,10 @@ function row(t) {
     <td data-tip="${esc(costTip)}"><div class="bar"><div class="t"><div class="f" style="width:${100 * t.cost / maxCost}%;background:var(--cost)"></div></div><div class="n">${usd(t.cost)}</div></div><div class="sub">${t.requests} req · ${fmtN(tk)} tok</div></td>
     <td class="r num">${hrs(t.active)}</td>
     <td class="r num">${t.wall == null ? "–" : t.wall.toFixed(1)}</td>
+    <td class="num">${t.where.local} local${t.where.cloud ? `<div class="sub">+${t.where.cloud} cloud</div>` : ""}</td>
+    <td class="r num" data-tip="${esc(toolTip(t.key + " tool time", t.toolTime))}">${t.buildTestMin == null ? DASH : hrs(t.buildTestMin)}</td>
+    ${resCells(t)}
+    <td class="r num" style="white-space:nowrap" data-tip="${esc(t.disk ?`<b>${esc(t.key)} worktrees</b><br><span class="m">${t.disk.total} GB in ${t.disk.worktrees}${t.disk.gone ? `, ${t.disk.gone} gone` : ""}<br>bin ${t.disk.bin} · obj ${t.disk.obj} · node_modules ${t.disk.node_modules} GB</span>` : `<b>${esc(t.key)}</b><br>No worktree on disk`)}">${t.disk ? `${gbFmt(t.disk.total)} GB<div class="sub">${Math.round(100 * (t.disk.heavy_share || 0))}% build out</div>` : DASH}</td>
     <td data-tip="${esc(ciTip)}"><div class="bar"><div class="t"><div class="f" style="width:${100 * t.ciMin / maxCi}%;background:var(--ci)"></div></div><div class="n">${t.ciMin ? t.ciMin.toFixed(0) : "–"}</div></div><div class="sub">${t.ciRuns ? `${t.ciRuns} runs${t.ciReruns ? ` · ${t.ciReruns} rerun${t.ciReruns > 1 ? "s" : ""}` : ""}${t.ciFailed ? ` · ${t.ciFailed} failed` : ""}` : "no runs"}</div></td>
     <td class="r num">${t.reviews || "–"}</td>
     <td class="r num">${t.cycle == null ? "–" : t.cycle.toFixed(1)}</td>
@@ -247,6 +319,94 @@ render();
     });
   });
   $("tl").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Session spans per ticket">${g}</svg>`;
+})();
+
+(function capacity() {
+  const C = DATA.capacity;
+  if (!C) { $("capacity").hidden = true; return; }
+  const m = C.machine || {}, R = C.resources, K = C.concurrency || {}, D = C.disk, S = C.sizing || {};
+  $("cap-spec").textContent = "This machine: " + [m.cpu_model, m.logical_cores && `${m.logical_cores} logical cores`, m.ram_gb && `${m.ram_gb} GB RAM`,
+    m.disk_total_gb && `${m.disk_root || ""} ${Math.round(m.disk_total_gb)} GB disk, ${Math.round(m.disk_free_gb)} GB free`].filter(Boolean).join(" · ");
+  const tiles = [
+    [K.peak_total ?? DASH, "Peak concurrent agents", K.peak_total == null ? NOT_MEASURED : `${K.peak_local} local · up to ${K.peak_cloud} cloud`],
+    [K.p95_local ?? DASH, "p95 concurrent local", K.p95_local == null ? NOT_MEASURED : `median ${K.median_local} · over ${K.busy_buckets} busy 5-min slots`],
+    [R ? `${Math.round(R.peak_cpu_pct)}%` : DASH, "Peak CPU", R ? `p95 ${R.p95_cpu_pct}% · ${R.minutes_cpu_ge_80} min at 80%+` : NOT_MEASURED],
+    [R ? `${gbFmt(R.peak_ram_used_gb)} GB` : DASH, "Peak RAM used", R ? `of ${R.mem_total_gb} GB · ${R.sampled_min} min sampled` : NOT_MEASURED],
+    [D ? `${gbFmt(D.total)} GB` : DASH, "Worktree disk", D ? `${D.worktrees} worktrees · ${Math.round(100 * (D.heavy_share || 0))}% bin/obj/node_modules` : "not measured"],
+    [C.buildTestHours == null ? DASH : C.buildTestHours.toFixed(1), "Build + test hours", C.ciMinutes ? `wall time · ${hrs(C.ciMinutes)} CI h ran elsewhere` : "wall time from tool call to result"],
+  ];
+  $("cap-strip").innerHTML = tiles.map(([v, k, s]) => `<div class="stat"><div class="v">${esc(v)}</div><div class="k">${esc(k)}</div><div class="s">${esc(s)}</div></div>`).join("");
+
+  const loc = K.local || [], cld = K.cloud || [], n = loc.length;
+  if (n) {
+    const W = 1200, L = 34, Rm = 16, top = 26, PH = 170, base = top + PH, H = base + 8;
+    const peak = Math.max(1, ...loc.map((v, i) => v + (cld[i] || 0)));
+    const stepY = peak <= 6 ? 1 : peak <= 12 ? 2 : peak <= 30 ? 5 : 10;
+    const yMax = Math.ceil(peak / stepY) * stepY;
+    const t0 = +new Date(K.start), bucketMs = K.bucket_min * 6e4, t1 = t0 + n * bucketMs;
+    const bw = (W - L - Rm) / n, xb = i => L + i * bw, y = v => base - v / yMax * PH, xt = v => L + (v - t0) / (t1 - t0) * (W - L - Rm);
+    let g = "";
+    for (let v = 0; v <= yMax; v += stepY) g += `<line class="grid" x1="${L}" x2="${W - Rm}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+    const hStep = (t1 - t0) / 36e5 > 36 ? 6 : 3;
+    for (let v = Math.ceil(t0 / (hStep * 36e5)) * hStep * 36e5; v <= t1; v += hStep * 36e5) {
+      const d = new Date(v), label = d.getUTCHours() === 0 ? d.toLocaleDateString("en-GB", { timeZone: "UTC", weekday: "short", day: "2-digit" }) : String(d.getUTCHours()).padStart(2, "0") + ":00";
+      g += `<line class="grid" x1="${xt(v)}" x2="${xt(v)}" y1="${top - 6}" y2="${base}"${d.getUTCHours() ? ' stroke-dasharray="2 3"' : ""}/><text x="${xt(v)}" y="${top - 12}" text-anchor="middle">${label}</text>`;
+    }
+    let pl = `M${L},${base}`, ct = "", cb = "";
+    for (let i = 0; i < n; i++) {
+      pl += `L${xb(i)},${y(loc[i])}L${xb(i + 1)},${y(loc[i])}`;
+      ct += `L${xb(i)},${y(loc[i] + (cld[i] || 0))}L${xb(i + 1)},${y(loc[i] + (cld[i] || 0))}`;
+      cb = `L${xb(i + 1)},${y(loc[i])}L${xb(i)},${y(loc[i])}` + cb;
+    }
+    g += `<path d="${pl}L${xb(n)},${base}Z" fill="var(--cost)"/>`;
+    if (cld.some(v => v)) g += `<path d="M${xb(0)},${y(loc[0])}${ct}${cb}Z" fill="var(--review)"/>`;
+    if (K.p95_local != null) g += `<line class="p95" x1="${L}" x2="${W - Rm}" y1="${y(K.p95_local)}" y2="${y(K.p95_local)}"/><text x="${W - Rm - 4}" y="${y(K.p95_local) - 6}" text-anchor="end">p95 local ${K.p95_local}</text>`;
+    for (let i = 0; i < n; i++) {
+      if (!loc[i] && !cld[i]) continue;
+      const a = t0 + i * bucketMs, tip = `<b>${when(new Date(a).toISOString())} UTC</b><br><span class="m">${loc[i]} local · ${cld[i] || 0} cloud (estimate)</span>`;
+      g += `<rect class="hit" x="${xb(i)}" y="${top}" width="${Math.max(bw, 1)}" height="${PH}" data-tip="${esc(tip)}"/>`;
+    }
+    $("cap-chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Concurrent local and cloud sessions per 5 minutes; peak ${K.peak_total}, p95 local ${K.p95_local}">${g}</svg>`;
+  } else {
+    $("cap-chart").innerHTML = `<div class="spec" style="padding:14px 16px">${NOT_MEASURED}: no session activity in the window</div>`;
+  }
+
+  const tt = C.toolTime;
+  if (tt) {
+    const cats = Object.entries(tt).filter(([, c]) => c.fg + c.bg > 0).sort((a, b) => (b[1].fg + b[1].bg) - (a[1].fg + a[1].bg));
+    const maxT = Math.max(...cats.map(([, c]) => c.fg + c.bg), 0.01);
+    $("cap-tools").innerHTML = cats.map(([k, c]) => {
+      const col = k === "build" || k === "test" ? "var(--ci)" : "var(--ink-3)";
+      const tip = `<b>${esc(CAT_NAMES[k] || k)}</b><br><span class="m">foreground ${c.fg} h · ${c.calls} calls${c.capped ? ` (${c.capped} capped)` : ""}<br>background ${c.bg} h · ${c.bgCalls} calls${c.unfinished ? `<br>${c.unfinished} never finished` : ""}</span>`;
+      return `<div>${esc(CAT_NAMES[k] || k)}</div><div class="t" data-tip="${esc(tip)}"><div class="f" style="width:${100 * c.fg / maxT}%;background:${col}"></div><div class="f" style="width:${100 * c.bg / maxT}%;background:color-mix(in srgb, ${col} 40%, var(--surface))"></div></div><div class="n" data-tip="${esc(tip)}">${(c.fg + c.bg).toFixed(1)}</div>`;
+    }).join("");
+    const lg = C.longest;
+    $("cap-tools-note").textContent = [C.background && `${C.background.calls} background commands, ${hrs(C.background.seconds / 60)} h`,
+      C.capped && `${C.capped} foreground calls capped at 10 min`, lg && `longest ${lg.category} ${hrs(lg.seconds / 60)} h: ${lg.command}`].filter(Boolean).join(" · ");
+  } else {
+    $("cap-tools").innerHTML = `<div class="spec">${NOT_MEASURED}</div>`;
+  }
+
+  const I = S.inputs || {};
+  const inputName = { p95_concurrent_local: "p95 concurrent local sessions", p95_avg_cores_per_session: "p95 avg cores per session-minute", p95_peak_rss_gb_per_session: "p95 peak RSS per session-minute, GB", worktrees_gb: "Worktrees on disk, GB" };
+  const out = (v, unit, k, f) => `<div class="o"><div class="v">${v == null ? DASH : v + unit}</div><div class="k">${k}</div><div class="s">${v == null ? "needs a missing input: " : ""}${esc(f || "")}</div></div>`;
+  $("cap-size").innerHTML = out(S.cores_needed, "", "Cores", S.formulas?.cores_needed)
+    + out(S.ram_needed_gb, " GB", "RAM", S.formulas?.ram_needed_gb)
+    + out(S.disk_needed_gb, " GB", "Disk", S.formulas?.disk_needed_gb)
+    + `<div class="inputs">${Object.entries(I).map(([k, v]) => `<div><span>${esc(inputName[k] || k)}: <span class="num">${v.value ?? DASH}</span></span><span class="chip ${v.measured ? "done" : "todo"}"><span>${v.measured ? `measured · ${esc(v.source)}` : `missing · ${esc(v.source)}`}</span></span></div>`).join("")}</div>`;
+
+  const facts = [];
+  if (R) {
+    const sh = R.cpu_share || {}, ch = R.cpu_hours || {}, f = R.per_session_minute || {};
+    facts.push(`Sampled <span class="num">${R.sampled_min}</span> min from ${esc(when(R.first_sample))} to ${esc(when(R.last_sample))} UTC.`);
+    facts.push(`Machine CPU <span class="num">${ch.machine}</span> h: sessions <span class="num">${Math.round(100 * (sh.sessions || 0))}%</span>, the Claude app <span class="num">${Math.round(100 * (sh.app || 0))}%</span>, everything else <span class="num">${Math.round(100 * (sh.unattributed || 0))}%</span>.`);
+    if (f.active_minutes) facts.push(`A busy session-minute uses <span class="num">${f.avg_cores_median}</span> cores and <span class="num">${f.peak_rss_gb_median}</span> GB at the median, <span class="num">${f.avg_cores_p95}</span> cores and <span class="num">${f.peak_rss_gb_p95}</span> GB at p95 (${f.active_minutes} session-minutes).`);
+    if ((R.unattributed_top || []).length) facts.push(`Outside the sessions: ${R.unattributed_top.slice(0, 5).map(([e, s]) => `${esc(e)} <span class="num">${s}</span> s`).join(", ")}.`);
+  } else {
+    facts.push(`CPU, RAM and IO: ${NOT_MEASURED}. The resource sampler writes one line a minute to <code>telemetry/resources</code>; this section fills in from its first sample.`);
+  }
+  if (C.familyResources) facts.push(`This family's sessions: <span class="num">${C.familyResources.cpuH}</span> CPU h, peak <span class="num">${C.familyResources.peakRamGb}</span> GB RSS, <span class="num">${C.familyResources.ioGb}</span> GB IO.`);
+  $("cap-facts").innerHTML = facts.map(f => `<li>${f}</li>`).join("");
 })();
 
 $("notes").innerHTML = `<div><h3>What the numbers leave out</h3><ul>${DATA.gaps.map(g => `<li>${esc(g)}</li>`).join("")}</ul></div>

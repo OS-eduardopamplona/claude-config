@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import backfill
+import capacity
 
 HOME = Path.home() / ".claude"
 APP_DATA = Path.home() / "AppData" / "Local" / "Claude-Data"
@@ -195,8 +196,11 @@ def main():
     ap.add_argument("--root-ticket", default=None, help="the epic the orchestrator works, e.g. RDMST-5555")
     ap.add_argument("--since", help="UTC date; tokens before it are not counted")
     ap.add_argument("--no-remote", action="store_true", help="skip gh and az")
+    ap.add_argument("--resources", help="folder of the resource sampler's samples-*.jsonl (default telemetry/resources)")
+    ap.add_argument("--no-disk", action="store_true", help="skip measuring worktree sizes")
     ap.add_argument("--out", help="JSON output path")
     a = ap.parse_args()
+    started = datetime.now(timezone.utc)
 
     meta = load_metadata()
     root = next((k for k in meta if k.startswith(a.root)), None)
@@ -212,8 +216,21 @@ def main():
         for key in ("cliSessionId", "lastAssistantCliSessionId"):
             if meta[sid].get(key):
                 cli_to_local[meta[sid][key]] = sid
-    usage = {r["session"]: r for r in backfill.aggregate(backfill.scan(since, set(cli_to_local)))}
+    found = backfill.scan_full(since, set(cli_to_local))
+    usage = {r["session"]: r for r in backfill.aggregate(found["messages"], found["tools"])}
     otel = otel_by_session()
+    now = datetime.now(timezone.utc)
+    lo = capacity.window(since, found["activity"])
+    samples = capacity.load_samples(a.resources, lo, now)
+    minutes = capacity.session_minutes(samples, members, cli_to_local)
+    known_roots, worktrees = {}, {}
+    for sid in members:
+        own = capacity.worktree_of(meta[sid].get("worktreePath") or meta[sid].get("cwd"))
+        used = capacity.worktree_roots(
+            [x for c in (meta[sid].get("cliSessionId"), meta[sid].get("lastAssistantCliSessionId")) if c
+             for x in found["paths"].get(c, ())], known_roots)
+        worktrees[sid] = sorted(({own} if own else set()) | used)
+    disk = {} if a.no_disk else capacity.disk_usage(sorted({w for ws in worktrees.values() for w in ws}))
 
     tickets = defaultdict(lambda: {"sessions": [], "prs": set(), "clouds": set()})
     for sid in members:
@@ -236,6 +253,10 @@ def main():
             "active_min": round(sum(r["active_min"] for r in rows), 1),
             "otel_cost_usd": round(o.get("claude_code.cost.usage", 0), 4) or None,
             "otel_active_min": round(o.get("claude_code.active_time.total", 0) / 60, 1) or None,
+            "where": "local", "cwd": s.get("cwd"), "worktrees": worktrees.get(sid, []),
+            "tool_time": backfill.merge_tool_time(r.get("tool_time") for r in rows),
+            "resources": capacity.summarize_minutes([minutes.get(sid, {})]),
+            "disk_gb": None if a.no_disk else capacity.disk_total(worktrees.get(sid, []), disk),
         })
         for p in s.get("prs") or []:
             if p.get("repo") and p.get("prNumber"):
@@ -264,7 +285,6 @@ def main():
             if t != owner:
                 tickets[t]["prs"].discard(ref)
     issues, jira_fetched = jira_cache()
-    now = datetime.now(timezone.utc)
 
     out_rows = []
     for ticket, t in tickets.items():
@@ -277,12 +297,18 @@ def main():
         created = [x["created"] for x in ss if x["created"]]
         last = [x["last_activity"] for x in ss if x["last_activity"]]
         jira_created, jira_resolved = iso(issue.get("created")), iso(issue.get("resolutiondate"))
+        tt = backfill.merge_tool_time(x["tool_time"] for x in ss)
+        clouds = t["clouds"] - {None}
         out_rows.append({
             "ticket": ticket, "summary": issue.get("summary"), "jira_status": issue.get("status"),
             "jira_category": issue.get("status_category"),
             "jira_cycle_days": round(((jira_resolved or now) - jira_created).total_seconds() / 86400, 2) if jira_created else None,
             "jira_status_since": issue.get("statuscategorychangedate"),
-            "sessions": len(ss), "cloud_sessions": len(t["clouds"] - {None}),
+            "sessions": len(ss), "cloud_sessions": len(clouds),
+            "where": {"local": len(ss), "cloud": len(clouds)},
+            "tool_time": tt, "build_test_min": round(backfill.build_test_seconds(tt) / 60, 1),
+            "resources": capacity.summarize_minutes([minutes.get(x["local_id"], {}) for x in ss]),
+            "disk_gb": None if a.no_disk else capacity.disk_total([w for x in ss for w in x["worktrees"]], disk),
             "requests": sum(x["requests"] for x in ss),
             "tokens": {k: sum(x["tokens"][k] for x in ss) for k in backfill.TOKEN_FIELDS},
             "cost_usd": round(sum(x["cost_usd"] for x in ss), 2),
@@ -299,24 +325,61 @@ def main():
             "session_detail": ss, "cloud_ids": sorted(t["clouds"] - {None}),
         })
     out_rows.sort(key=lambda r: (r["ticket"] == "orchestration", -r["cost_usd"]))
+    kept_local = {x["local_id"] for r in out_rows for x in r["session_detail"]}
+    kept_clouds = {c for r in out_rows for c in r["cloud_ids"]}
+    merged_activity = {}
+    for c, m in found["activity"].items():
+        if cli_to_local.get(c) in kept_local:
+            merged_activity.setdefault(cli_to_local[c], set()).update(m)
+    cloud_spans = {c: span for c, span in found["mentions"].items() if c in kept_clouds}
+    conc = capacity.concurrency(merged_activity, cloud_spans, lo, now)
+    machine = capacity.machine_from_samples(samples)
+    family_tools = backfill.merge_tool_time(x["tool_time"] for r in out_rows for x in r["session_detail"])
+    disk_family = None if a.no_disk else capacity.disk_total([w for r in out_rows for x in r["session_detail"] for w in x["worktrees"]], disk)
+    footprint = (machine or {}).get("per_session_minute")
+    result_capacity = {
+        "machine": capacity.machine_spec(),
+        "window": {"start": lo.isoformat(), "end": now.isoformat()},
+        "concurrency": conc,
+        "cloud_activity": "estimated: each cloud session counts from its first to its last mention in the family's transcripts",
+        "resources": machine,
+        "family_resources": capacity.summarize_minutes([minutes.get(x, {}) for x in kept_local]),
+        "tool_time": family_tools,
+        "build_test_hours": round(backfill.build_test_seconds(family_tools) / 3600, 2),
+        "worktree_disk_gb": disk_family,
+        "ci_minutes_offloaded": round(sum(r["ci_minutes"] for r in out_rows), 1),
+        "sizing": capacity.sizing(conc, footprint, disk_family),
+    }
     result = {
         "generated_at": now, "root": root, "root_title": meta[root].get("title"), "root_ticket": root_ticket,
-        "since": a.since, "jira_fetched_at": jira_fetched, "tickets": out_rows,
+        "since": a.since, "jira_fetched_at": jira_fetched, "tickets": out_rows, "capacity": result_capacity,
         "gaps": ["cloud sessions have no local transcripts or OTel; counted, not costed",
                  "cost is estimated from list prices; OTel cost appears per session once exporting",
                  "active time is assistant activity with gaps capped at 5 min; OTel active time when present",
-                 "Jira cycle time is created to resolution (or now); no changelog transitions"],
+                 "Jira cycle time is created to resolution (or now); no changelog transitions",
+                 "resources come only from the sampler's start onward"
+                 + (f" (first sample {machine['first_sample'][:16]} UTC)" if machine else " (no samples yet: not measured)"),
+                 "cloud sessions have no resource data; their concurrency is a first-to-last-mention estimate",
+                 "processes shorter than 15 s are partly missed by the once-a-minute sampler",
+                 "tool time is wall time from tool call to result, not CPU; parallel calls overlap",
+                 "worktree disk counts the session's .claude/worktrees folder and the git worktrees its shell commands cd, -C or worktree-add into, that still exist; a worktree two tickets used counts in both rows and once in the family total",
+                 f"foreground shell calls longer than {backfill.SHELL_FG_CAP_S} s are capped there: the tool times out at 10 min, so the rest is a permission or user wait"],
+        "run_seconds": None,
     }
+    result["run_seconds"] = round((datetime.now(timezone.utc) - started).total_seconds(), 1)
     out = Path(a.out or OUT_DIR / f"{root}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=1, default=str), encoding="utf-8")
     with open(out.with_suffix(".csv"), "w", newline="", encoding="utf-8") as f:
         cols = ["ticket", "summary", "jira_status", "sessions", "cloud_sessions", "requests", "cost_usd", "active_min",
-                "wall_hours", "ci_runs", "ci_minutes", "ci_reruns", "ci_failed", "review_rounds", "pr_state", "jira_cycle_days"]
+                "wall_hours", "ci_runs", "ci_minutes", "ci_reruns", "ci_failed", "review_rounds", "pr_state", "jira_cycle_days",
+                "build_test_min", "cpu_hours", "peak_rss_gb", "disk_gb"]
         w = csv.DictWriter(f, cols, extrasaction="ignore")
         w.writeheader()
-        w.writerows(out_rows)
-    print(f"{len(out_rows)} tickets, ${sum(r['cost_usd'] for r in out_rows):,.2f} -> {out}", file=sys.stderr)
+        w.writerows({**r, "cpu_hours": (r["resources"] or {}).get("cpu_hours"),
+                     "peak_rss_gb": (r["resources"] or {}).get("peak_rss_gb"),
+                     "disk_gb": (r["disk_gb"] or {}).get("total")} for r in out_rows)
+    print(f"{len(out_rows)} tickets, ${sum(r['cost_usd'] for r in out_rows):,.2f} in {result['run_seconds']} s -> {out}", file=sys.stderr)
 
 
 if __name__ == "__main__":
