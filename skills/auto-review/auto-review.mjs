@@ -13,6 +13,8 @@ const REPOS = {
 const HOME = path.join(os.homedir(), ".claude", "auto-review");
 const LOCK = path.join(HOME, "lock.json");
 const WEBHOOK_FILE = path.join(HOME, "slack-webhook.txt");
+const ALERTED = path.join(HOME, "alerted.json");
+const ALERT_QUIET_MS = 4 * 60 * 60 * 1000;
 const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_PER_RUN = 3;
 const LAST_ROUND = 3;
@@ -407,14 +409,31 @@ async function post(args) {
 }
 
 async function notifyReady(p) {
-  if (!fs.existsSync(WEBHOOK_FILE)) return console.log(`no ${WEBHOOK_FILE}: Slack not notified`);
   const { repo, number, round, title, url } = p.meta;
   const summary = `Round ${round}: no blocking issues${p.tally ? ` (${p.tally}, the author decides)` : ""}.`;
+  await slack({ repo, pr: String(number), title: title ?? "", url: url ?? `https://github.com/${repo}/pull/${number}`, summary });
+}
+
+async function checkRun([log]) {
+  const results = fs.readFileSync(log, "utf8").split(/\r?\n/).flatMap((l) => { try { const o = JSON.parse(l); return o.type === "result" ? [o] : []; } catch { return []; } });
+  const result = results.at(-1);
+  if (result && !result.is_error) return;
+  process.exitCode = 4;
+  const text = String(result?.result ?? `the review run ended with no result (${log})`).split(/\r?\n/)[0];
+  console.log(`review run failed: ${text}`);
+  const last = fs.existsSync(ALERTED) ? JSON.parse(fs.readFileSync(ALERTED, "utf8")) : null;
+  if (last?.text === text && Date.now() - last.at < ALERT_QUIET_MS) return console.log(`already alerted at ${new Date(last.at).toISOString()}: ${text}`);
+  fs.writeFileSync(ALERTED, JSON.stringify({ at: Date.now(), text }));
+  await slack({ repo: "auto-review", pr: "-", title: "Auto-review stopped: a review run failed", url: "https://github.com/pulls/review-requested", summary: text });
+}
+
+async function slack(fields) {
+  if (!fs.existsSync(WEBHOOK_FILE)) return console.log(`no ${WEBHOOK_FILE}: Slack not notified`);
   try {
     const res = await fetch(fs.readFileSync(WEBHOOK_FILE, "utf8").trim(), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repo, pr: String(number), title: title ?? "", url: url ?? `https://github.com/${repo}/pull/${number}`, summary }),
+      body: JSON.stringify(fields),
     });
     console.log(res.ok ? "Slack notified" : `Slack webhook answered ${res.status}: ${await res.text()}`);
   } catch (e) {
@@ -436,9 +455,9 @@ function lock(args = []) {
 }
 
 const [verb, ...rest] = process.argv.slice(2);
-const verbs = { lock, unlock: () => process.env.AUTO_REVIEW_LOCKED || fs.rmSync(LOCK, { force: true }), candidates, next, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])) };
+const verbs = { lock, unlock: () => process.env.AUTO_REVIEW_LOCKED || fs.rmSync(LOCK, { force: true }), candidates, next, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])), "check-run": checkRun };
 if (!verbs[verb]) {
-  console.error("usage: auto-review.mjs lock [--renew] | unlock | next [--exclude <file>] | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run] | notify <run dir>");
+  console.error("usage: auto-review.mjs lock [--renew] | unlock | next [--exclude <file>] | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run] | notify <run dir> | check-run <log>");
   process.exit(2);
 }
 try {
