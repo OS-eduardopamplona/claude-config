@@ -16,3 +16,6 @@ rules/koda.*
 !hooks/*.sh
 !.gitattributes
 !hooks/*.ps1
+!telemetry-tools/
+!telemetry-tools/*.py
+!telemetry-tools/*.html
