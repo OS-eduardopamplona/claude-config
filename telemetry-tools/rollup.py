@@ -2,6 +2,7 @@ import argparse
 import csv
 import glob
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ APP_DATA = Path.home() / "AppData" / "Local" / "Claude-Data"
 OUT_DIR = HOME / "telemetry" / "rollup"
 JIRA_CACHE = HOME / "telemetry" / "jira" / "issues.json"
 OTEL_DIR = HOME / "telemetry" / "otel"
+PIDS_DIR = HOME / "telemetry" / "pids"
 ADO = ["--org", "https://dev.azure.com/OutSystemsRD", "--project", "ArtifactRepository"]
 ADO_DEFINITIONS = {"OutSystems/OutSystems.ModelExtensions": 432, "OutSystems/OutSystems.Model": 298}
 REPO_ALIASES = {"model": "OutSystems/OutSystems.Model", "me": "OutSystems/OutSystems.ModelExtensions"}
@@ -189,40 +191,165 @@ def jira_cache():
     return d.get("issues", {}), d.get("fetched_at")
 
 
+def resolve_root(meta, arg):
+    if arg != "self":
+        return next((k for k in meta if k.startswith(arg)), None)
+    host = os.environ.get("CLAUDE_CODE_HOST_SESSION_ID")
+    if host in meta:
+        return host
+    pid_file = PIDS_DIR / f"{os.environ.get('CLAUDE_PID', '')}.json"
+    if os.environ.get("CLAUDE_PID") and pid_file.exists():
+        try:
+            host = json.load(open(pid_file, encoding="utf-8")).get("host_session")
+        except (OSError, ValueError):
+            host = None
+        if host in meta:
+            return host
+    cli = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    return next((k for k, s in meta.items() if cli and cli in (s.get("cliSessionId"), s.get("lastAssistantCliSessionId"))), None)
+
+
+def repo_of(path):
+    path = capacity.native_path(path)
+    if not path:
+        return "unknown"
+    path = re.split(r"[\\/]\.claude[\\/]worktrees[\\/]", path, flags=re.I)[0]
+    return Path(path).name or path
+
+
+def family_root(meta, sid):
+    seen = set()
+    while sid not in seen:
+        seen.add(sid)
+        parent = (meta.get(sid, {}).get("spawnedFrom") or {}).get("sessionId")
+        if not parent or parent not in meta:
+            return sid
+        sid = parent
+    return sid
+
+
+def group_of(meta, sid, s, group, state_workers):
+    if group == "repo":
+        return repo_of(s.get("worktreePath") or s.get("cwd") or s.get("originCwd"))
+    if group == "family":
+        top = family_root(meta, sid)
+        own = ticket_of(meta[top], state_workers, None) if top in meta else None
+        return f"{own or (meta.get(top) or {}).get('title') or top} [{top[6:14] if top.startswith('local_') else top[:8]}]"
+    return ticket_of(s, state_workers, None) or "unmapped"
+
+
+def resource_notes(activity_minutes, sampled, attributed, first_sample):
+    if sampled and int(datetime.now(timezone.utc).timestamp() // 60) - max(sampled) <= 2:
+        activity_minutes = {m for m in activity_minutes if m <= max(sampled)}
+    active = len(activity_minutes)
+    if not active:
+        return None
+    covered = activity_minutes & sampled
+    seen = activity_minutes & attributed
+    before = sum(1 for m in activity_minutes if first_sample is None or m < first_sample)
+    if not seen:
+        if before == active:
+            why = "before the sampler started" + (f" ({datetime.fromtimestamp(first_sample * 60, timezone.utc):%Y-%m-%d %H:%M} UTC)" if first_sample else "")
+        elif not covered:
+            why = "the sampler wrote nothing while it ran (receiver down)"
+        else:
+            why = "its processes were never attributed to it (CLI not mapped to the session)"
+        return f"not measured: {why}"
+    if len(seen) < active * 0.9:
+        rest = []
+        if before:
+            rest.append(f"{before} before the sampler started")
+        if active - before - len(covered & seen) > 0 and len(covered) < active - before:
+            rest.append(f"{active - before - len(covered)} with the receiver down")
+        return f"partly measured: {len(seen)} of {active} active minutes sampled" + (f" ({', '.join(rest)})" if rest else "")
+    return None
+
+
+def print_report(result):
+    def fmt(v, unit=""):
+        return "not measured" if v is None else f"{v}{unit}"
+    print(f"# {result['title']}\nwindow {result['since'] or 'all time'} to {result['generated_at']:%Y-%m-%d %H:%M} UTC\n")
+    for r in result["tickets"]:
+        tk = r["tokens"]
+        res = r["resources"] or {}
+        print(f"## {r['ticket']}{' (root)' if r.get('root') else ''}: {r['summary'] or (r['session_detail'][0]['title'] if r['session_detail'] else '')}")
+        print(f"- sessions {r['sessions']} local, {r['cloud_sessions']} cloud | ${r['cost_usd']} | {r['requests']} requests | "
+              f"{sum(tk.values()):,} tokens ({tk['cache_read']:,} cache read, {tk['output']:,} output)")
+        print(f"- active {r['active_min']} min | wall {fmt(r['wall_hours'], ' h')} | build+test {r['build_test_min']} min")
+        cats = sorted(((k, c["seconds"] + c["bg_seconds"], c["calls"] + c["bg_calls"]) for k, c in (r["tool_time"] or {}).get("by_category", {}).items()), key=lambda x: -x[1])
+        print("- tool time: " + (", ".join(f"{k} {s / 60:.1f} min/{n} calls" for k, s, n in cats if n) or "none"))
+        if res:
+            print(f"- CPU {res['cpu_hours']} h (avg {res['avg_cores']} cores) | peak RAM {res['peak_rss_gb']} GB | IO {res['io_read_gb']} GB read, {res['io_write_gb']} GB written | {res['sampled_min']} min sampled")
+        for note in r["resources_notes"] or ([] if res else ["not measured"]):
+            print(f"- resources {note}")
+        print(f"- disk {fmt((r['disk_gb'] or {}).get('total'), ' GB')} | CI {r['ci_runs']} runs, {r['ci_minutes']} min, {r['ci_reruns']} reruns, {r['ci_failed']} failed | {r['review_rounds']} human review rounds")
+        for p in r["prs"]:
+            print(f"- PR {p['repo']}#{p['number']} {p.get('state', '?')}{' draft' if p.get('draft') else ''} {p.get('url', '')}")
+        print()
+
+
 def main():
-    ap = argparse.ArgumentParser(description="One row per ticket for an orchestrator session's family.")
-    ap.add_argument("--root", required=True, help="orchestrator local_ session id (prefix accepted)")
+    ap = argparse.ArgumentParser(description="One row per ticket for a session and every session it started, or for every session on the machine.")
+    pick = ap.add_mutually_exclusive_group(required=True)
+    pick.add_argument("--root", help="local_ session id (prefix accepted), or 'self' for the session running this")
+    pick.add_argument("--all", action="store_true", help="every session on the machine active since --since")
+    ap.add_argument("--group", choices=("ticket", "repo", "family"), default="ticket", help="--all rows: by ticket, repo or family")
     ap.add_argument("--state", help="orchestrator state file (read only)")
     ap.add_argument("--root-ticket", default=None, help="the epic the orchestrator works, e.g. RDMST-5555")
-    ap.add_argument("--since", help="UTC date; tokens before it are not counted")
+    ap.add_argument("--since", help="UTC date or datetime; tokens before it are not counted (default: the root's start)")
     ap.add_argument("--no-remote", action="store_true", help="skip gh and az")
     ap.add_argument("--resources", help="folder of the resource sampler's samples-*.jsonl (default telemetry/resources)")
     ap.add_argument("--no-disk", action="store_true", help="skip measuring worktree sizes")
+    ap.add_argument("--report", action="store_true", help="also print a Markdown summary to stdout")
     ap.add_argument("--out", help="JSON output path")
     a = ap.parse_args()
     started = datetime.now(timezone.utc)
 
     meta = load_metadata()
-    root = next((k for k in meta if k.startswith(a.root)), None)
-    if not root:
-        sys.exit(f"no session {a.root}")
-    root_ticket = a.root_ticket or (TICKET.findall(meta[root].get("title") or "") or [None])[0]
     state_workers, state_prs, state_clouds = parse_state(a.state)
-    members = family(meta, root)
-    since = backfill.parse_date(a.since)
+    if a.all:
+        if not a.since:
+            sys.exit("--all needs --since")
+        root, root_ticket, root_own = None, a.root_ticket, None
+        since = backfill.parse_date(a.since)
+        members = [k for k, s in meta.items() if (from_ms(s.get("lastActivityAt")) or since) >= since]
+    else:
+        root = resolve_root(meta, a.root)
+        if not root:
+            sys.exit(f"no session {a.root}")
+        root_ticket = a.root_ticket or (TICKET.findall(meta[root].get("title") or "") or [None])[0]
+        members = family(meta, root)
+        root_own = ticket_of(meta[root], state_workers, None) or a.root_ticket
+        since = backfill.parse_date(a.since) if a.since else from_ms(meta[root].get("createdAt"))
+    mode = "all" if a.all else ("family" if len(members) > 1 else "session")
 
     cli_to_local = {}
     for sid in members:
         for key in ("cliSessionId", "lastAssistantCliSessionId"):
             if meta[sid].get(key):
                 cli_to_local[meta[sid][key]] = sid
-    found = backfill.scan_full(since, set(cli_to_local))
+    found = backfill.scan_full(since, None if a.all else set(cli_to_local))
     usage = {r["session"]: r for r in backfill.aggregate(found["messages"], found["tools"])}
+    if a.all:
+        for cli, r in usage.items():
+            if cli not in cli_to_local:
+                cli_to_local[cli] = cli
+                meta[cli] = {"sessionId": cli, "cliSessionId": cli, "title": f"CLI session {cli[:8]} (no desktop record)",
+                             "cwd": r.get("cwd"), "branch": r.get("branch")}
+                members.append(cli)
     otel = otel_by_session()
     now = datetime.now(timezone.utc)
     lo = capacity.window(since, found["activity"])
     samples = capacity.load_samples(a.resources, lo, now)
     minutes = capacity.session_minutes(samples, members, cli_to_local)
+    first_sample = capacity.first_sample_minute(a.resources)
+    sampled = {m for s in samples for m in range(int((s["_ts"].timestamp() - s["_interval"]) // 60), int(s["_ts"].timestamp() // 60) + 1)}
+    session_activity = defaultdict(set)
+    for c, ms in found["activity"].items():
+        if c in cli_to_local:
+            session_activity[cli_to_local[c]].update(ms)
+    attributed = {sid: {m for i in mm for m in range(int((samples[i]["_ts"].timestamp() - samples[i]["_interval"]) // 60), int(samples[i]["_ts"].timestamp() // 60) + 1)}
+                  for sid, mm in minutes.items()}
     known_roots, worktrees = {}, {}
     for sid in members:
         own = capacity.worktree_of(meta[sid].get("worktreePath") or meta[sid].get("cwd"))
@@ -235,7 +362,14 @@ def main():
     tickets = defaultdict(lambda: {"sessions": [], "prs": set(), "clouds": set()})
     for sid in members:
         s = meta[sid]
-        ticket = "orchestration" if sid == root else (ticket_of(s, state_workers, root_ticket) or "unmapped")
+        if a.all:
+            ticket = group_of(meta, sid, s, a.group, state_workers)
+        elif sid == root:
+            ticket = root_own or ("orchestration" if mode == "family" else "unmapped")
+        else:
+            ticket = ticket_of(s, state_workers, root_ticket) or "unmapped"
+        if sid == root:
+            tickets[ticket]["root"] = True
         cli_ids = {s.get("cliSessionId"), s.get("lastAssistantCliSessionId")} - {None}
         rows = [usage[c] for c in cli_ids if c in usage]
         o = defaultdict(float)
@@ -256,6 +390,7 @@ def main():
             "where": "local", "cwd": s.get("cwd"), "worktrees": worktrees.get(sid, []),
             "tool_time": backfill.merge_tool_time(r.get("tool_time") for r in rows),
             "resources": capacity.summarize_minutes([minutes.get(sid, {})]),
+            "resources_note": resource_notes(session_activity.get(sid, set()), sampled, attributed.get(sid, set()), first_sample),
             "disk_gb": None if a.no_disk else capacity.disk_total(worktrees.get(sid, []), disk),
         })
         for p in s.get("prs") or []:
@@ -279,7 +414,7 @@ def main():
         info = pr_info.get(ref, {})
         named = [t.upper() for x in (info.get("head"), info.get("title")) if x for t in TICKET.findall(x)]
         owners = [t for t in tickets if ref in tickets[t]["prs"]]
-        owner = next((t for t in named if t in tickets), None) or next((t for t in owners if t != "orchestration"), owners[0])
+        owner = next((t for t in named if t in tickets), None) or next((t for t in owners if not tickets[t].get("root")), owners[0])
         tickets[owner]["prs"].add(ref)
         for t in owners:
             if t != owner:
@@ -300,7 +435,7 @@ def main():
         tt = backfill.merge_tool_time(x["tool_time"] for x in ss)
         clouds = t["clouds"] - {None}
         out_rows.append({
-            "ticket": ticket, "summary": issue.get("summary"), "jira_status": issue.get("status"),
+            "ticket": ticket, "root": bool(t.get("root")), "summary": issue.get("summary"), "jira_status": issue.get("status"),
             "jira_category": issue.get("status_category"),
             "jira_cycle_days": round(((jira_resolved or now) - jira_created).total_seconds() / 86400, 2) if jira_created else None,
             "jira_status_since": issue.get("statuscategorychangedate"),
@@ -308,6 +443,8 @@ def main():
             "where": {"local": len(ss), "cloud": len(clouds)},
             "tool_time": tt, "build_test_min": round(backfill.build_test_seconds(tt) / 60, 1),
             "resources": capacity.summarize_minutes([minutes.get(x["local_id"], {}) for x in ss]),
+            "resources_notes": sorted({f"{x['title'] or x['local_id']}: {x['resources_note']}" if len(ss) > 1 else x["resources_note"]
+                                       for x in ss if x["resources_note"]}) + ([f"{len(clouds)} cloud session{'s' if len(clouds) > 1 else ''}: not measured, no local resource data"] if clouds else []),
             "disk_gb": None if a.no_disk else capacity.disk_total([w for x in ss for w in x["worktrees"]], disk),
             "requests": sum(x["requests"] for x in ss),
             "tokens": {k: sum(x["tokens"][k] for x in ss) for k in backfill.TOKEN_FIELDS},
@@ -324,7 +461,7 @@ def main():
             "review_rounds": sum(p.get("review_rounds", 0) for p in prs),
             "session_detail": ss, "cloud_ids": sorted(t["clouds"] - {None}),
         })
-    out_rows.sort(key=lambda r: (r["ticket"] == "orchestration", -r["cost_usd"]))
+    out_rows.sort(key=lambda r: (r["root"] and len(out_rows) > 1, -r["cost_usd"]))
     kept_local = {x["local_id"] for r in out_rows for x in r["session_detail"]}
     kept_clouds = {c for r in out_rows for c in r["cloud_ids"]}
     merged_activity = {}
@@ -341,7 +478,8 @@ def main():
         "machine": capacity.machine_spec(),
         "window": {"start": lo.isoformat(), "end": now.isoformat()},
         "concurrency": conc,
-        "cloud_activity": "estimated: each cloud session counts from its first to its last mention in the family's transcripts",
+        "scope": "every session on this machine in the window" if a.all else "this session and every session it started",
+        "cloud_activity": "estimated: each cloud session counts from its first to its last mention in the transcripts",
         "resources": machine,
         "family_resources": capacity.summarize_minutes([minutes.get(x, {}) for x in kept_local]),
         "tool_time": family_tools,
@@ -350,9 +488,15 @@ def main():
         "ci_minutes_offloaded": round(sum(r["ci_minutes"] for r in out_rows), 1),
         "sizing": capacity.sizing(conc, footprint, disk_family),
     }
+    root_title = meta[root].get("title") if root else None
+    label = root_ticket or root_own
+    title = (f"All sessions by {a.group}" if mode == "all" else f"{label or root_title or root} Ledger" if mode == "family"
+             else f"{label} Session" if label else root_title or root)
     result = {
-        "generated_at": now, "root": root, "root_title": meta[root].get("title"), "root_ticket": root_ticket,
-        "since": a.since, "jira_fetched_at": jira_fetched, "tickets": out_rows, "capacity": result_capacity,
+        "generated_at": now, "mode": mode, "group": a.group if a.all else None, "title": title,
+        "root": root, "root_title": root_title, "root_ticket": root_ticket, "root_row": root_own,
+        "children": len(members) - 1 if root else None,
+        "since": a.since or since.strftime("%Y-%m-%dT%H:%MZ"), "jira_fetched_at": jira_fetched, "tickets": out_rows, "capacity": result_capacity,
         "gaps": ["cloud sessions have no local transcripts or OTel; counted, not costed",
                  "cost is estimated from list prices; OTel cost appears per session once exporting",
                  "active time is assistant activity with gaps capped at 5 min; OTel active time when present",
@@ -367,19 +511,22 @@ def main():
         "run_seconds": None,
     }
     result["run_seconds"] = round((datetime.now(timezone.utc) - started).total_seconds(), 1)
-    out = Path(a.out or OUT_DIR / f"{root}.json")
+    out = Path(a.out or OUT_DIR / (f"all-{a.group}-{a.since[:10]}.json" if a.all else f"{root}.json"))
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=1, default=str), encoding="utf-8")
     with open(out.with_suffix(".csv"), "w", newline="", encoding="utf-8") as f:
         cols = ["ticket", "summary", "jira_status", "sessions", "cloud_sessions", "requests", "cost_usd", "active_min",
                 "wall_hours", "ci_runs", "ci_minutes", "ci_reruns", "ci_failed", "review_rounds", "pr_state", "jira_cycle_days",
-                "build_test_min", "cpu_hours", "peak_rss_gb", "disk_gb"]
+                "build_test_min", "cpu_hours", "peak_rss_gb", "disk_gb", "resources_notes"]
         w = csv.DictWriter(f, cols, extrasaction="ignore")
         w.writeheader()
-        w.writerows({**r, "cpu_hours": (r["resources"] or {}).get("cpu_hours"),
-                     "peak_rss_gb": (r["resources"] or {}).get("peak_rss_gb"),
+        w.writerows({**r, "cpu_hours": (r["resources"] or {}).get("cpu_hours", "not measured"),
+                     "peak_rss_gb": (r["resources"] or {}).get("peak_rss_gb", "not measured"),
+                     "resources_notes": "; ".join(r["resources_notes"]),
                      "disk_gb": (r["disk_gb"] or {}).get("total")} for r in out_rows)
-    print(f"{len(out_rows)} tickets, ${sum(r['cost_usd'] for r in out_rows):,.2f} in {result['run_seconds']} s -> {out}", file=sys.stderr)
+    if a.report:
+        print_report(result)
+    print(f"{len(out_rows)} rows, ${sum(r['cost_usd'] for r in out_rows):,.2f} in {result['run_seconds']} s -> {out}", file=sys.stderr)
 
 
 if __name__ == "__main__":

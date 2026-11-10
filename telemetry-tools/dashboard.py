@@ -43,7 +43,8 @@ def slim(rollup):
     tickets = []
     for t in rollup["tickets"]:
         tickets.append({
-            "key": t["ticket"], "summary": t.get("summary"), "status": t.get("jira_status"),
+            "key": t["ticket"], "root": t.get("root", t["ticket"] == "orchestration"),
+            "resNotes": t.get("resources_notes") or [], "summary": t.get("summary"), "status": t.get("jira_status"),
             "category": t.get("jira_category"), "cycle": t.get("jira_cycle_days"),
             "sessions": t["sessions"], "cloud": t["cloud_sessions"], "requests": t["requests"],
             "tokens": t["tokens"], "cost": t["cost_usd"], "active": t["active_min"], "wall": t["wall_hours"],
@@ -65,9 +66,14 @@ def slim(rollup):
     return {
         "generatedAt": rollup["generated_at"], "since": rollup.get("since"), "root": rollup["root"],
         "rootTitle": rollup.get("root_title"), "rootTicket": rollup.get("root_ticket"),
+        "mode": rollup.get("mode", "family"), "group": rollup.get("group"), "title": title_of(rollup),
         "jiraFetchedAt": rollup.get("jira_fetched_at"), "gaps": rollup.get("gaps", []), "tickets": tickets,
         "capacity": slim_capacity(rollup.get("capacity")),
     }
+
+
+def title_of(rollup):
+    return rollup.get("title") or f"{rollup.get('root_ticket') or 'Orchestration'} Ledger"
 
 
 def main():
@@ -77,7 +83,7 @@ def main():
     a = ap.parse_args()
     src = Path(a.rollup) if a.rollup else max(ROLLUP_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
     data = slim(json.load(open(src, encoding="utf-8")))
-    name = f"{data['rootTicket'] or 'Orchestration'} Ledger"
+    name = data["title"]
     html = TEMPLATE.read_text(encoding="utf-8")
     html = html.replace("__TITLE__", name).replace("__DATA__", json.dumps(data, default=str).replace("</", "<\\/"))
     out = Path(a.out or OUT_DIR / f"{src.stem}.html")

@@ -1,6 +1,6 @@
 ---
 name: orchestration-telemetry
-description: Tokens, cost, active time, CI minutes, review rounds, CPU, RAM, disk and tool time per Claude session and per ticket, from local files, plus a capacity sizing for a dedicated agent machine. Use when asked what a session, a ticket or an orchestrator's family of sessions cost or used, how big a machine for the agents should be, to refresh the ledger dashboard, or when the OTel export or the resource sampler stops writing.
+description: Tokens, cost, active time, CI minutes, review rounds, CPU, RAM, disk and tool time per Claude session and per ticket, from local files, plus a capacity sizing for a dedicated agent machine. Use when asked for "telemetry for this session" or for session `local_…`, what a session and the sessions it started, a ticket or an orchestrator's family cost or used, what every session on this machine used since a date, how big a machine for the agents should be, to refresh the ledger dashboard, or when the OTel export or the resource sampler stops writing.
 ---
 
 # Orchestration telemetry
@@ -14,8 +14,18 @@ Everything lives under `~/.claude`: the scripts in `telemetry-tools/`, the data 
 | `resource_sampler.py` | started by the receiver: every 15 s reads every process's CPU, memory and I/O, attributes it to the CLI session above it in the process tree, and writes one line a minute (machine, per session, desktop app, unattributed); `--once` prints a sample | `telemetry/resources/samples-<date>.jsonl` |
 | `hooks/telemetry-register.sh` | `SessionStart` and `UserPromptSubmit` hook: maps a CLI's pid to its desktop session | `telemetry/pids/<pid>.json` |
 | `backfill.py` | tokens by type and model, list-price cost, idle-capped active minutes per CLI session, from `projects/**/*.jsonl` (subagents folded into their parent) | `telemetry/backfill/sessions.json` |
-| `rollup.py` + `capacity.py` | one row per ticket for an orchestrator and its descendants: sessions, local or cloud, cost, active and wall time, tool time by kind (build, test, git, ...), CPU hours, peak RAM, worktree disk, PRs, CI runs/minutes/reruns, human review rounds, Jira state; and a `capacity` block (concurrency, peaks, footprint per session, `sizing`) | `telemetry/rollup/<root>.json` and `.csv` |
-| `dashboard.py` + `dashboard.html` | renders a roll-up as the "<ticket> Ledger" page | `telemetry/dashboard/<root>.html` |
+| `rollup.py` + `capacity.py` | one row per ticket for a session and its descendants (`--root`), or per ticket, repo or family for every session on the machine (`--all`): sessions, local or cloud, cost, active and wall time, tool time by kind (build, test, git, ...), CPU hours, peak RAM, worktree disk, PRs, CI runs/minutes/reruns, human review rounds, Jira state; and a `capacity` block (concurrency, peaks, footprint per session, `sizing`) | `telemetry/rollup/<root>.json` (or `all-<group>-<date>.json`) and `.csv` |
+| `dashboard.py` + `dashboard.html` | renders a roll-up as one page, whose title and copy follow its shape: one session, a family, or all sessions | `telemetry/dashboard/<root>.html` |
+
+## Telemetry for one session, on demand
+
+1. `python ~/.claude/telemetry-tools/rollup.py --root self --report` for the session asking (`CLAUDE_CODE_HOST_SESSION_ID`, else `telemetry/pids/<CLAUDE_PID>.json`), or `--root <local_ id or prefix>` for another. It takes that session and every session it started, recursively, since the root started (`--since` overrides); `--state` and `--root-ticket` are optional. `--report` prints a Markdown summary per row: cost, tokens, active and wall time, tool time by kind, CPU, RAM, disk, PRs, CI and review rounds.
+2. Answer from that summary. Say "not measured" with its reason for a value the roll-up has none for, never 0.
+3. When a page helps, `python ~/.claude/telemetry-tools/dashboard.py telemetry/rollup/<root>.json` and publish `telemetry/dashboard/<root>.html` as a new artifact. Never publish it over the ledger below.
+
+## Every session on the machine
+
+`python ~/.claude/telemetry-tools/rollup.py --all --since <YYYY-MM-DD> --group ticket|repo|family --report`: every desktop session active since then, and every CLI transcript with no desktop record, one row per ticket, repo or family (the top session's ticket or title). Its `capacity` counts every local session on the machine, so size a machine request from this view, not from one family.
 
 ## Refresh the ledger
 
@@ -28,7 +38,7 @@ Done when the publish returns a new version and every ticket worked since `--sin
 
 ## How a session finds its ticket
 
-`rollup.py` walks the desktop session records (`Claude-Data/*/claude-code-sessions/**/local_*.json`) down from the root through `spawnedFrom.sessionId`. A session's ticket is its row in the state file's Worker column, else the first non-epic `RDMST-nnnn` in its title, spawn name, branch or PR branches. A PR belongs to the ticket its title or branch names. The root's own row is `orchestration`.
+`rollup.py` walks the desktop session records (`Claude-Data/*/claude-code-sessions/**/local_*.json`) down from the root through `spawnedFrom.sessionId`; `--all` takes every record instead. A session's ticket is its row in the state file's Worker column, else the first non-epic `RDMST-nnnn` in its title, spawn name, branch or PR branches. A PR belongs to the ticket its title or branch names. The root finds its own ticket the same way; it is `orchestration` only when it started sessions and names no ticket (`--root-ticket` otherwise), and `unmapped` alone.
 
 ## Capacity sizing
 
@@ -36,7 +46,7 @@ Done when the publish returns a new version and every ticket worked since `--sin
 
 ## Gaps
 
-- Resource data exists only from 2026-11-10, when the sampler started; earlier sessions have tool time from their transcripts, not CPU or RAM.
+- Resource data exists only from 2026-11-10 16:12 UTC, when the sampler started; earlier sessions have tool time from their transcripts, not CPU or RAM. A row without samples says "not measured" and why (before the sampler, receiver down, CLI never mapped, cloud), in `resources_notes`; one sampled for under 90% of its active minutes says "partly measured".
 - A process that lives under 15 s is partly missed; processes left behind by a CLI that has exited are unattributed. A CLI started before the hook maps on its next prompt.
 - Cloud sessions have no resource data, and their concurrency counts from their first to their last mention in the transcripts.
 - Tool time is wall time, not CPU. A worktree shared by two tickets counts in both rows.

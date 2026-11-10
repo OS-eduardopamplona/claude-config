@@ -361,3 +361,18 @@ def window(since, activity):
         return since
     firsts = [min(m) for m in activity.values() if m]
     return datetime.fromtimestamp(min(firsts) * 60, timezone.utc) if firsts else datetime.now(timezone.utc) - timedelta(days=1)
+
+
+def first_sample_minute(folder=None):
+    folder = Path(folder or RESOURCES_DIR)
+    files = sorted(folder.glob("samples-*.jsonl")) if folder.is_dir() else []
+    for f in files:
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    ts = parse_iso(json.loads(line).get("ts"))
+                except (ValueError, TypeError):
+                    continue
+                if ts:
+                    return int(ts.timestamp() // 60)
+    return None

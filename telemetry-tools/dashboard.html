@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>__TITLE__</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -151,7 +152,7 @@ td.num { white-space: nowrap; }
 
   <section>
     <div class="head">
-      <h2>Per ticket</h2>
+      <h2 id="rows-title">Per ticket</h2>
       <div class="legend"><span><i style="background:var(--cost)"></i>Claude spend, list price</span><span><i style="background:var(--ci)"></i>CI agent minutes on the ticket's PRs</span></div>
     </div>
     <div class="scroll"><table id="table"><thead><tr id="thead"></tr></thead><tbody id="tbody"></tbody></table></div>
@@ -159,7 +160,7 @@ td.num { white-space: nowrap; }
 
   <section class="timeline">
     <div class="head">
-      <h2>When the workers ran</h2>
+      <h2>When the sessions ran</h2>
       <div class="legend"><span>One bar per local session, from its start to its last activity (UTC). Hover for its cost.</span></div>
     </div>
     <div class="scroll" id="tl"></div>
@@ -168,7 +169,7 @@ td.num { white-space: nowrap; }
   <section class="cap" id="capacity">
     <div class="head">
       <h2>Capacity</h2>
-      <div class="legend"><span>What a dedicated machine for these agents would have to hold.</span></div>
+      <div class="legend"><span id="cap-scope">What a dedicated machine for these agents would have to hold.</span></div>
     </div>
     <div class="spec" id="cap-spec"></div>
     <div class="strip" id="cap-strip" aria-label="Capacity totals"></div>
@@ -198,12 +199,20 @@ const fmtN = v => v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : v >= 1e6 ? (v / 1e6).t
 const when = s => new Date(s).toLocaleString("en-GB", { timeZone: "UTC", weekday: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 const tokTotal = t => Object.values(t).reduce((a, b) => a + b, 0);
 const T = DATA.tickets;
-const isOrch = t => t.key === "orchestration";
+const isOrch = t => !!t.root;
+const MODE = DATA.mode || "family", FAM = MODE === "family", ALL = MODE === "all";
+const rootLabel = t => t.key === "orchestration" ? `${DATA.rootTicket || ""} orchestrator`.trim() : t.key + (FAM ? " · root" : "");
+const sinceMs = DATA.since ? +new Date(DATA.since.length <= 10 ? DATA.since + "T00:00:00Z" : DATA.since) : null;
 
-$("eyebrow").textContent = `Orchestration telemetry · since ${DATA.since || "all time"} · generated ${when(DATA.generatedAt)} UTC`;
-$("title").textContent = `${DATA.rootTicket || ""} Ledger`.trim();
-const workers = T.filter(t => !isOrch(t));
-$("lede").textContent = `What the ${DATA.rootTicket || "orchestrator"} orchestrator and its ${workers.reduce((a, t) => a + t.sessions, 0)} worker sessions spent across ${workers.length} tickets: Claude tokens at list price, the CI their PRs ran, review rounds and where each ticket stands in Jira.`;
+$("eyebrow").textContent = `${ALL ? "Machine" : FAM ? "Session family" : "Session"} telemetry · since ${sinceMs ? when(new Date(sinceMs).toISOString()) + " UTC" : "all time"} · generated ${when(DATA.generatedAt)} UTC`;
+$("title").textContent = DATA.title || `${DATA.rootTicket || ""} Ledger`.trim();
+const workers = FAM ? T.filter(t => !isOrch(t)) : T;
+if (ALL) $("rows-title").textContent = `Per ${DATA.group || "ticket"}`;
+const lede = "Claude tokens at list price, tool time, CPU and RAM where the sampler saw them, the CI their PRs ran, review rounds and Jira state.";
+$("lede").textContent = ALL ? `Every Claude session on this machine in the window, ${T.reduce((a, t) => a + t.sessions, 0)} local, one row per ${DATA.group || "ticket"}: ${lede}`
+  : FAM ? `What the session “${DATA.rootTitle}” and the ${workers.reduce((a, t) => a + t.sessions, 0)} sessions it started spent across ${workers.length} tickets: ${lede}`
+  : `What the session “${DATA.rootTitle}” spent: ${lede}`;
+$("cap-scope").textContent = ALL ? "What a dedicated machine for every session on this one would have to hold." : `What a dedicated machine for ${FAM ? "this session and the sessions it started" : "this session"} would have to hold; size a request from the all-sessions view.`;
 
 const sum = f => T.reduce((a, t) => a + f(t), 0);
 const prs = T.flatMap(t => t.prs);
@@ -213,12 +222,12 @@ const orch = T.find(isOrch);
 const tokens = sum(t => tokTotal(t.tokens));
 const cacheRead = sum(t => t.tokens.cache_read || 0);
 const stats = [
-  [usd(sum(t => t.cost)), "Claude spend", orch ? `orchestrator ${usd(orch.cost)}` : ""],
+  [usd(sum(t => t.cost)), "Claude spend", FAM && orch ? `root session ${usd(orch.cost)}` : ""],
   [fmtN(sum(t => t.requests)), "Model requests", `${fmtN(tokens)} tokens · ${Math.round(100 * cacheRead / Math.max(tokens, 1))}% cache reads`],
   [hrs(sum(t => t.active)), "Active hours", "gaps over 5 min not counted"],
   [hrs(sum(t => t.ciMin)), "CI agent hours", `${sum(t => t.ciRuns)} runs · ${sum(t => t.ciReruns)} reruns`],
   [`${merged}/${prs.length}`, "PRs merged", `${sum(t => t.reviews)} human reviews`],
-  [`${done}/${workers.length}`, "Tickets done", `${workers.filter(t => t.status === "In Code Review").length} in code review`],
+  MODE === "session" ? [T[0]?.status || "n/a", "Jira", T[0]?.cycle == null ? "not in the Jira cache" : `${T[0].cycle.toFixed(1)} days since created`] : [`${done}/${workers.length}`, ALL && DATA.group !== "ticket" ? "Rows done in Jira" : "Tickets done", `${workers.filter(t => t.status === "In Code Review").length} in code review`],
 ];
 $("strip").innerHTML = stats.map(([v, k, s]) => `<div class="stat"><div class="v">${esc(v)}</div><div class="k">${esc(k)}</div><div class="s">${esc(s)}</div></div>`).join("");
 
@@ -243,7 +252,7 @@ const cols = [
   ["prs", "PRs", t => t.prs.length, false],
 ];
 let sortKey = "cost", sortDir = -1;
-const DASH = "—", NOT_MEASURED = "not measured yet";
+const DASH = "—", NOT_MEASURED = "not measured";
 const CAT_NAMES = { build: "Build", test: "Test", node: "Node / npm", git: "git", remote: "gh, az, curl", other_shell: "Other shell", subagent: "Subagents", mcp: "MCP tools", file: "File tools", other: "Other tools" };
 const gbFmt = v => v == null ? DASH : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
 function toolTip(title, tt) {
@@ -255,18 +264,18 @@ function toolTip(title, tt) {
 function resCells(t) {
   const r = t.res;
   if (!r) {
-    const tip = `<b>${esc(t.key)}</b><br>${NOT_MEASURED}: the resource sampler had no minute for these sessions`;
-    return `<td class="r num" data-tip="${esc(tip)}">${DASH}</td><td class="r num" data-tip="${esc(tip)}">${DASH}</td>`;
+    const tip = `<b>${esc(t.key)}</b><br>${(t.resNotes || []).map(esc).join("<br>") || `${NOT_MEASURED}: the resource sampler had no minute for these sessions`}`;
+    return `<td class="r num" data-tip="${esc(tip)}"><span class="sub">${NOT_MEASURED}</span></td><td class="r num" data-tip="${esc(tip)}"><span class="sub">${NOT_MEASURED}</span></td>`;
   }
-  const tip = `<b>${esc(t.key)}, sampled</b><br><span class="m">${r.sampledMin} min sampled · avg ${r.avgCores} cores<br>${r.cpuH} CPU h · peak ${r.peakRamGb} GB RSS · ${r.ioGb} GB IO<br>${r.top.map(([e, s]) => `${esc(e)} ${s} CPU s`).join("<br>")}</span>`;
-  return `<td class="r num" data-tip="${esc(tip)}">${r.cpuH > 0 && r.cpuH < 0.01 ? "<0.01" : r.cpuH.toFixed(2)}<div class="sub">avg ${r.avgCores} cores</div></td><td class="r num" data-tip="${esc(tip)}">${gbFmt(r.peakRamGb)} GB<div class="sub">${r.sampledMin} min</div></td>`;
+  const tip = `<b>${esc(t.key)}, sampled</b><br><span class="m">${r.sampledMin} min sampled · avg ${r.avgCores} cores<br>${r.cpuH} CPU h · peak ${r.peakRamGb} GB RSS · ${r.ioGb} GB IO<br>${r.top.map(([e, s]) => `${esc(e)} ${s} CPU s`).join("<br>")}${(t.resNotes || []).map(n => "<br>" + esc(n)).join("")}</span>`;
+  return `<td class="r num" data-tip="${esc(tip)}">${r.cpuH > 0 && r.cpuH < 0.01 ? "<0.01" : r.cpuH.toFixed(2)}<div class="sub">avg ${r.avgCores} cores${(t.resNotes || []).length ? " · partial" : ""}</div></td><td class="r num" data-tip="${esc(tip)}">${gbFmt(r.peakRamGb)} GB<div class="sub">${r.sampledMin} min</div></td>`;
 }
 function row(t) {
   const tk = tokTotal(t.tokens);
   const costTip = `<b>${esc(t.key)}</b><br><span class="m">${usd(t.cost)} · ${t.requests} requests<br>${fmtN(tk)} tokens: ${fmtN(t.tokens.cache_read)} cache read, ${fmtN(t.tokens.cache_write_5m + t.tokens.cache_write_1h)} cache write, ${fmtN(t.tokens.output)} output, ${fmtN(t.tokens.input)} input</span>`;
   const ciTip = `<b>CI on ${t.prs.length} PR${t.prs.length === 1 ? "" : "s"}</b><br><span class="m">${t.ciRuns} runs · ${t.ciReruns} reruns · ${t.ciFailed} failed<br>${t.prs.map(p => `${esc(p.ref)}: ${p.ci ? `${p.ci.runs} runs, ${p.ci.minutes} min (${p.ci.source})` : "no data"}`).join("<br>")}</span>`;
   const sessTip = t.spans.map(s => `${esc(s.title)}<br><span class="m">${usd(s.cost || 0)} · ${hrs(s.active || 0)} h active</span>`).join("<br>") + (t.cloud ? `<br>+${t.cloud} cloud session${t.cloud > 1 ? "s" : ""}, not costed` : "");
-  const keyCell = isOrch(t) ? `<div class="key">${esc(DATA.rootTicket || "")} orchestrator</div><div class="sum">${esc(DATA.rootTitle)}</div>`
+  const keyCell = isOrch(t) ? `<div class="key">${esc(rootLabel(t))}</div><div class="sum">${esc(t.summary || DATA.rootTitle)}</div>`
     : `<div class="key">${esc(t.key)}</div><div class="sum">${esc(t.summary || "Not in the Jira cache")}</div>`;
   return `<tr class="${isOrch(t) ? "orch" : ""}">
     <td>${keyCell}</td>
@@ -299,7 +308,7 @@ render();
 
 (function timeline() {
   const lanes = [...T].filter(t => t.spans.some(s => s.start)).sort((a, b) => isOrch(b) - isOrch(a) || new Date(Math.min(...a.spans.map(s => +new Date(s.start)))) - new Date(Math.min(...b.spans.map(s => +new Date(s.start)))));
-  const lo = DATA.since ? +new Date(DATA.since + "T00:00:00Z") : Math.min(...lanes.flatMap(t => t.spans.map(s => +new Date(s.start))));
+  const lo = sinceMs ? Math.floor(sinceMs / 36e5) * 36e5 : Math.min(...lanes.flatMap(t => t.spans.map(s => +new Date(s.start))));
   const hi = Math.ceil(+new Date(DATA.generatedAt) / 36e5) * 36e5;
   const W = 1200, L = 150, R = 16, top = 26, lane = 18, H = top + lanes.length * lane + 8;
   const x = v => L + (Math.min(Math.max(v, lo), hi) - lo) / (hi - lo) * (W - L - R);
@@ -311,7 +320,7 @@ render();
   }
   lanes.forEach((t, i) => {
     const y = top + i * lane;
-    g += `<text x="${L - 10}" y="${y + 12}" text-anchor="end">${esc(isOrch(t) ? "orchestrator" : t.key)}</text>`;
+    g += `<text x="${L - 10}" y="${y + 12}" text-anchor="end">${esc((isOrch(t) ? rootLabel(t) : t.key).slice(0, 24))}</text>`;
     t.spans.filter(s => s.start && s.end && +new Date(s.end) > lo).forEach(s => {
       const a = x(+new Date(s.start)), b = Math.max(x(+new Date(s.end)), a + 3);
       const tip = `<b>${esc(s.title)}</b><br><span class="m">${when(s.start)} → ${when(s.end)} UTC<br>${usd(s.cost || 0)} · ${hrs(s.active || 0)} h active · ${s.requests} req</span>`;
@@ -405,14 +414,14 @@ render();
   } else {
     facts.push(`CPU, RAM and IO: ${NOT_MEASURED}. The resource sampler writes one line a minute to <code>telemetry/resources</code>; this section fills in from its first sample.`);
   }
-  if (C.familyResources) facts.push(`This family's sessions: <span class="num">${C.familyResources.cpuH}</span> CPU h, peak <span class="num">${C.familyResources.peakRamGb}</span> GB RSS, <span class="num">${C.familyResources.ioGb}</span> GB IO.`);
+  if (C.familyResources) facts.push(`${ALL ? "All sessions" : FAM ? "This family's sessions" : "This session"}: <span class="num">${C.familyResources.cpuH}</span> CPU h, peak <span class="num">${C.familyResources.peakRamGb}</span> GB RSS, <span class="num">${C.familyResources.ioGb}</span> GB IO.`);
   $("cap-facts").innerHTML = facts.map(f => `<li>${f}</li>`).join("");
 })();
 
 $("notes").innerHTML = `<div><h3>What the numbers leave out</h3><ul>${DATA.gaps.map(g => `<li>${esc(g)}</li>`).join("")}</ul></div>
 <div><h3>Sources</h3><ul>
 <li>Tokens and cost: local transcripts under <code>~/.claude/projects</code>, subagents included, deduplicated by message id.</li>
-<li>Sessions: the desktop app's session records, from the orchestrator <code>${esc(DATA.root.slice(0, 14))}…</code> down.</li>
+<li>Sessions: ${ALL ? "every desktop session record and CLI transcript active in the window" : `the desktop app's session records, from <code>${esc(DATA.root.slice(0, 14))}…</code>${FAM ? " down" : " alone"}`}.</li>
 <li>PRs and reviews: <code>gh pr view</code>. CI: Azure DevOps definitions 432 and 298, GitHub Actions elsewhere.</li>
 <li>Jira: cached ${DATA.jiraFetchedAt ? when(DATA.jiraFetchedAt) + " UTC" : "never"}; cycle is created to resolved, or to now.</li>
 </ul></div>`;
