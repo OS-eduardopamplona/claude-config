@@ -463,8 +463,9 @@ async function post(args) {
     console.log(`\n(dry run: nothing posted; ${path.join(dir, "post.md")})`);
     return;
   }
-  const { repo, number, head } = p.meta;
-  if (assess(repo, number).skip?.includes("already reviewed")) throw new Error(`head ${short(head)} already carries a marker; not posting twice`);
+  const { repo, number, head, round } = p.meta;
+  const posted = markersOf(repo, number).find((m) => m.round >= round);
+  if (posted) throw new Error(`round ${posted.round} is already posted (head ${short(posted.head)}); not posting round ${round} twice`);
   for (const r of p.replies) {
     const payload = path.join(dir, `reply-${r.comment}.json`);
     fs.writeFileSync(payload, JSON.stringify({ body: r.body }));

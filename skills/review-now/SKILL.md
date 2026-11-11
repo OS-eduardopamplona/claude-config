@@ -14,4 +14,5 @@ disable-model-invocation: true
 3. When the background command finishes, report one line per PR: `finished` or `failed`, with its log. A failed run has
    already DMed Eduardo on Slack (`check-run --now`). The posted review's URL is in the log's last `result` line.
 
-A PR whose head is already reviewed is skipped by the run itself (no post); `dry-run` posts nothing and reviews it anyway.
+A PR whose head is already reviewed is reviewed again as the next round, on the same head, which is how a rebuttal the
+author wrote without a new commit gets its answer; `dry-run` posts nothing.
