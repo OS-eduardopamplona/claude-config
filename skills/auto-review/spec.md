@@ -9,6 +9,8 @@ Raw data: `scratchpad/ruben/all.jsonl`.
   OutSystems.ModelExtensions, OutSystems.ModelQL) not authored by Eduardo, PRs requesting him first, follow-up rounds before first ones, rounds past the last one at
   the end; batches of 3 back to back until nothing is due, a run that starts meanwhile exiting on the lock. (Ruben: review-requested, hourly at :20. Francisco: every open PR,
   too noisy. Nuno: batch over open PRs.)
+- On demand: `/review-now <PRs>` (`now.sh`) starts named PRs at once, beside a running batch, on spare worktree slots.
+  A claims file (PR, pid, slot) keeps two runs off the same PR and the same worktree; a dead pid's claims lapse.
 - Stateless idempotency: hidden `<!-- auto-review head=<full sha> round=<n> -->` in every post. Skip a head already
   marked. (Francisco)
 - Skip a new head whose only change since the last reviewed head is a clean merge of the base (no conflict

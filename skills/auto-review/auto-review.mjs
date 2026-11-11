@@ -16,6 +16,8 @@ const WEBHOOK_FILE = path.join(HOME, "slack-webhook.txt");
 const ALERTED = path.join(HOME, "alerted.json");
 const ALERT_QUIET_MS = 4 * 60 * 60 * 1000;
 const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
+const CLAIMS = path.join(HOME, "claims.json");
+const CLAIM_TTL_MS = 12 * 60 * 60 * 1000;
 const MUTEX_STALE_MS = 10 * 60 * 1000;
 const MAX_PER_RUN = 3;
 const LAST_ROUND = 3;
@@ -46,6 +48,15 @@ const gh = (...args) => run("gh", args);
 const ghJson = (...args) => JSON.parse(gh(...args));
 const ghPaged = (endpoint) => JSON.parse(gh("api", "--paginate", "--slurp", endpoint)).flat();
 const git = (cwd, ...args) => run("git", args, { cwd }).trim();
+const readJson = (file) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null);
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
 const short = (sha) => String(sha ?? "").slice(0, 8);
 const split = (full) => {
   const [owner, name] = full.split("/");
@@ -84,6 +95,48 @@ function exclusively(clone, fn) {
   } finally {
     fs.rmSync(mutex, { recursive: true, force: true });
   }
+}
+
+const liveClaims = () => (readJson(CLAIMS) ?? []).filter((c) => alive(c.pid) && Date.now() - c.at < CLAIM_TTL_MS);
+const othersClaims = () => liveClaims().filter((c) => c.pid !== Number(process.env.AUTO_REVIEW_CLAIM_PID));
+
+function slotFloor() {
+  const held = readJson(LOCK);
+  return held && Date.now() - held.at < LOCK_TTL_MS && !held.claims ? SLOTS + 1 : 1;
+}
+
+function claim(args) {
+  const i = args.indexOf("--pid");
+  const pid = Number(args[i + 1]);
+  if (i < 0 || !Number.isInteger(pid) || !alive(pid)) throw new Error(`--pid ${args[i + 1]}: not a live process`);
+  const prs = [...new Set(args.filter((a, k) => k !== i && k !== i + 1).map(parsePrArg).map((p) => `${p.repo}#${p.number}`))];
+  exclusively("claims", () => {
+    const claims = liveClaims();
+    const floor = slotFloor();
+    for (const pr of prs) {
+      const held = claims.find((c) => c.pr === pr);
+      if (held) {
+        console.error(`${pr}: already being reviewed (pid ${held.pid}, slot ${held.slot}, since ${new Date(held.at).toISOString()})`);
+        continue;
+      }
+      const repo = pr.split("#")[0];
+      let slot = floor;
+      while (claims.some((c) => c.repo === repo && c.slot === slot)) slot++;
+      claims.push({ pr, repo, slot, pid, at: Date.now() });
+      console.log(`${pr} ${slot}`);
+    }
+    fs.writeFileSync(CLAIMS, JSON.stringify(claims, null, 2));
+  });
+}
+
+function release(args) {
+  const i = args.indexOf("--pid");
+  const pid = Number(args[i + 1]);
+  const prs = args.filter((a, k) => k !== i && k !== i + 1).map(parsePrArg).map((p) => `${p.repo}#${p.number}`);
+  exclusively("claims", () => {
+    const kept = liveClaims().filter((c) => !(c.pid === pid && (!prs.length || prs.includes(c.pr))));
+    fs.writeFileSync(CLAIMS, JSON.stringify(kept, null, 2));
+  });
 }
 
 function fetchPr(clone, number, base) {
@@ -156,7 +209,10 @@ function select(args) {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, requested: requestedKeys.has(key(p)) }));
   }
+  const claimed = othersClaims();
   const assessed = picked.map((p) => {
+    const held = claimed.find((c) => c.pr === `${p.repo}#${p.number}`);
+    if (held) return { repo: p.repo, number: p.number, skip: `being reviewed by another run (pid ${held.pid}, slot ${held.slot})` };
     try { return { ...assess(p.repo, p.number, { force }), requested: p.requested }; }
     catch (e) { return { repo: p.repo, number: p.number, skip: `assessment failed, retried next run: ${String(e.message).split(/\r?\n/)[0]}` }; }
   });
@@ -231,7 +287,7 @@ function prepare(args) {
   const [arg, roundArg, lastHeadArg, slotArg] = args;
   const { repo, number } = parsePrArg(arg);
   const slot = Number(slotArg ?? 1);
-  if (!(slot >= 1 && slot <= SLOTS)) throw new Error(`slot ${slotArg}: 1 to ${SLOTS}`);
+  if (!(Number.isInteger(slot) && slot >= 1)) throw new Error(`slot ${slotArg}: a whole number from 1`);
   const { clone } = REPOS[repo];
   const worktree = worktreeOf(repo, slot);
   const pr = ghJson("pr", "view", String(number), "-R", repo, "--json", "number,title,url,body,author,headRefOid,headRefName,baseRefName,files,commits");
@@ -435,7 +491,7 @@ async function notifyReady(p) {
   await slack({ repo, pr: String(number), title: title ?? "", url: url ?? `https://github.com/${repo}/pull/${number}`, summary });
 }
 
-async function checkRun([log]) {
+async function checkRun([log, ...flags]) {
   const results = fs.readFileSync(log, "utf8").split(/\r?\n/).flatMap((l) => { try { const o = JSON.parse(l); return o.type === "result" ? [o] : []; } catch { return []; } });
   const result = results.at(-1);
   if (result && !result.is_error) return;
@@ -445,7 +501,7 @@ async function checkRun([log]) {
   const last = fs.existsSync(ALERTED) ? JSON.parse(fs.readFileSync(ALERTED, "utf8")) : null;
   if (last?.text === text && Date.now() - last.at < ALERT_QUIET_MS) return console.log(`already alerted at ${new Date(last.at).toISOString()}: ${text}`);
   fs.writeFileSync(ALERTED, JSON.stringify({ at: Date.now(), text }));
-  await slack({ repo: "auto-review", pr: "-", title: "Auto-review stopped: a review run failed", url: "https://github.com/pulls/review-requested", summary: text });
+  await slack({ repo: "auto-review", pr: "-", title: flags.includes("--now") ? "Auto-review: a review-now run failed" : "Auto-review stopped: a review run failed", url: "https://github.com/pulls/review-requested", summary: text });
 }
 
 async function slack(fields) {
@@ -472,13 +528,13 @@ function lock(args = []) {
       process.exit(3);
     }
   }
-  fs.writeFileSync(LOCK, JSON.stringify({ at: Date.now(), pid: process.ppid }));
+  fs.writeFileSync(LOCK, JSON.stringify({ at: Date.now(), pid: process.ppid, ...(args.includes("--claims") ? { claims: true } : {}) }));
 }
 
 const [verb, ...rest] = process.argv.slice(2);
-const verbs = { lock, unlock: () => process.env.AUTO_REVIEW_LOCKED || fs.rmSync(LOCK, { force: true }), candidates, next, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])), "check-run": checkRun };
+const verbs = { lock, unlock: () => process.env.AUTO_REVIEW_LOCKED || fs.rmSync(LOCK, { force: true }), candidates, next, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])), "check-run": checkRun, claim, release, claims: () => console.log(JSON.stringify(liveClaims(), null, 2)) };
 if (!verbs[verb]) {
-  console.error("usage: auto-review.mjs lock [--renew] | unlock | next [--exclude <file>] | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run] | notify <run dir> | check-run <log>");
+  console.error("usage: auto-review.mjs lock [--renew] [--claims] | unlock | claim --pid <winpid> <PR>... | release --pid <winpid> [<PR>...] | claims | next [--exclude <file>] | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run] | notify <run dir> | check-run <log> [--now]");
   process.exit(2);
 }
 try {
