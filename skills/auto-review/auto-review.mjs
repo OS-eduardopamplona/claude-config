@@ -15,15 +15,11 @@ const LOCK = path.join(HOME, "lock.json");
 const WEBHOOK_FILE = path.join(HOME, "slack-webhook.txt");
 const ALERTED = path.join(HOME, "alerted.json");
 const ALERT_QUIET_MS = 4 * 60 * 60 * 1000;
-const LOCK_TTL_MS = 6 * 60 * 60 * 1000;
-const CLAIMS = path.join(HOME, "claims.json");
-const CLAIM_TTL_MS = 12 * 60 * 60 * 1000;
-const MUTEX_STALE_MS = 10 * 60 * 1000;
-const MAX_PER_RUN = 3;
+const MAX_PER_RUN = 4;
 const LAST_ROUND = 3;
 const STALE_DAYS = 7;
 const SEARCH_LIMIT = 500;
-const SLOTS = Number(process.env.AUTO_REVIEW_SLOTS ?? 3);
+const BLOCKING = new Set(["blocker", "major"]);
 const GITVERSION = "GitVersion.yml";
 const GITVERSION_DAYS = 14;
 const FOOTER = "— Automated review by Claude";
@@ -77,76 +73,14 @@ function markersOf(repo, number) {
     .sort((a, b) => a.round - b.round);
 }
 
-function exclusively(clone, fn) {
-  const mutex = path.join(HOME, `${path.basename(clone)}.mutex`);
-  for (;;) {
-    try {
-      fs.mkdirSync(mutex);
-      break;
-    } catch (e) {
-      if (e.code !== "EEXIST") throw e;
-      const age = Date.now() - (fs.statSync(mutex, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
-      if (age > MUTEX_STALE_MS) fs.rmSync(mutex, { recursive: true, force: true });
-      else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
-    }
-  }
-  try {
-    return fn();
-  } finally {
-    fs.rmSync(mutex, { recursive: true, force: true });
-  }
-}
-
-const liveClaims = () => (readJson(CLAIMS) ?? []).filter((c) => alive(c.pid) && Date.now() - c.at < CLAIM_TTL_MS);
-const othersClaims = () => liveClaims().filter((c) => c.pid !== Number(process.env.AUTO_REVIEW_CLAIM_PID));
-
-function slotFloor() {
-  const held = readJson(LOCK);
-  return held && Date.now() - held.at < LOCK_TTL_MS && !held.claims ? SLOTS + 1 : 1;
-}
-
-function claim(args) {
-  const i = args.indexOf("--pid");
-  const pid = Number(args[i + 1]);
-  if (i < 0 || !Number.isInteger(pid) || !alive(pid)) throw new Error(`--pid ${args[i + 1]}: not a live process`);
-  const prs = [...new Set(args.filter((a, k) => k !== i && k !== i + 1).map(parsePrArg).map((p) => `${p.repo}#${p.number}`))];
-  exclusively("claims", () => {
-    const claims = liveClaims();
-    const floor = slotFloor();
-    for (const pr of prs) {
-      const held = claims.find((c) => c.pr === pr);
-      if (held) {
-        console.error(`${pr}: already being reviewed (pid ${held.pid}, slot ${held.slot}, since ${new Date(held.at).toISOString()})`);
-        continue;
-      }
-      const repo = pr.split("#")[0];
-      let slot = floor;
-      while (claims.some((c) => c.repo === repo && c.slot === slot)) slot++;
-      claims.push({ pr, repo, slot, pid, at: Date.now() });
-      console.log(`${pr} ${slot}`);
-    }
-    fs.writeFileSync(CLAIMS, JSON.stringify(claims, null, 2));
-  });
-}
-
-function release(args) {
-  const i = args.indexOf("--pid");
-  const pid = Number(args[i + 1]);
-  const prs = args.filter((a, k) => k !== i && k !== i + 1).map(parsePrArg).map((p) => `${p.repo}#${p.number}`);
-  exclusively("claims", () => {
-    const kept = liveClaims().filter((c) => !(c.pid === pid && (!prs.length || prs.includes(c.pr))));
-    fs.writeFileSync(CLAIMS, JSON.stringify(kept, null, 2));
-  });
-}
-
 function fetchPr(clone, number, base) {
-  exclusively(clone, () => git(clone, "fetch", "--quiet", "origin", base, `+refs/pull/${number}/head:refs/auto-review/pr-${number}`));
+  git(clone, "fetch", "--quiet", "origin", base, `+refs/pull/${number}/head:refs/auto-review/pr-${number}`);
   return git(clone, "rev-parse", `refs/auto-review/pr-${number}`);
 }
 
 function hasCommit(clone, sha) {
   if (tryRun("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: clone }).code === 0) return true;
-  return exclusively(clone, () => tryRun("git", ["fetch", "--quiet", "origin", sha], { cwd: clone })).code === 0;
+  return tryRun("git", ["fetch", "--quiet", "origin", sha], { cwd: clone }).code === 0;
 }
 
 function ownPatchId(clone, base, sha) {
@@ -209,10 +143,7 @@ function select(args) {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, requested: requestedKeys.has(key(p)) }));
   }
-  const claimed = othersClaims();
   const assessed = picked.map((p) => {
-    const held = claimed.find((c) => c.pr === `${p.repo}#${p.number}`);
-    if (held) return { repo: p.repo, number: p.number, skip: `being reviewed by another run (pid ${held.pid}, slot ${held.slot})` };
     try { return { ...assess(p.repo, p.number, { force }), requested: p.requested }; }
     catch (e) { return { repo: p.repo, number: p.number, skip: `assessment failed, retried next run: ${String(e.message).split(/\r?\n/)[0]}` }; }
   });
@@ -222,17 +153,14 @@ function select(args) {
 }
 
 function candidates(args) {
-  const { explicit, due, skipped } = select(args);
-  const result = { slots: SLOTS, due: explicit ? due : due.slice(0, MAX_PER_RUN), deferred: explicit ? [] : due.slice(MAX_PER_RUN).map((a) => `${a.repo}#${a.number}`), skipped };
-  console.log(JSON.stringify(result, null, 2));
+  const { due, skipped } = select(args);
+  console.log(JSON.stringify({ due: due.map((a) => `${a.repo}#${a.number} round ${a.round}${a.forced ? ` (forced: ${a.forced})` : ""}`), skipped }, null, 2));
 }
 
 function next(args) {
-  const i = args.indexOf("--exclude");
-  const excluded = new Set(i >= 0 ? fs.readFileSync(args[i + 1], "utf8").split(/\s+/).filter(Boolean) : []);
-  const { due } = select([]);
-  for (const a of due.filter((a) => !excluded.has(`${a.repo}#${a.number}@${a.head}`)).slice(0, MAX_PER_RUN))
-    console.log(`${a.repo}#${a.number} ${a.head}`);
+  const { explicit, due, skipped } = select(args);
+  for (const s of explicit ? skipped : []) console.error(`skipped ${s}`);
+  for (const a of explicit ? due : due.slice(0, MAX_PER_RUN)) console.log(`${a.repo}#${a.number} ${a.round} ${a.lastHead ?? "-"}`);
 }
 
 function threadsOf(repo, number) {
@@ -263,8 +191,6 @@ function overlaps(repo, clone, number, head, files) {
     });
 }
 
-const worktreeOf = (repo, slot) => (slot > 1 ? `${REPOS[repo].worktree}-${slot}` : REPOS[repo].worktree);
-
 function restoreGitVersion(worktree) {
   if (!fs.existsSync(path.join(worktree, GITVERSION))) return;
   tryRun("git", ["update-index", "--no-skip-worktree", GITVERSION], { cwd: worktree });
@@ -283,28 +209,26 @@ function shortenGitVersion(worktree) {
 }
 
 function prepare(args) {
-  if (fs.existsSync(LOCK)) fs.writeFileSync(LOCK, JSON.stringify({ ...JSON.parse(fs.readFileSync(LOCK, "utf8")), at: Date.now() }));
-  const [arg, roundArg, lastHeadArg, slotArg] = args;
+  const deep = args.includes("--deep");
+  const [arg, roundArg, lastHeadArg] = args.filter((a) => !a.startsWith("--"));
   const { repo, number } = parsePrArg(arg);
-  const slot = Number(slotArg ?? 1);
-  if (!(Number.isInteger(slot) && slot >= 1)) throw new Error(`slot ${slotArg}: a whole number from 1`);
-  const { clone } = REPOS[repo];
-  const worktree = worktreeOf(repo, slot);
+  const { clone, worktree } = REPOS[repo];
   const pr = ghJson("pr", "view", String(number), "-R", repo, "--json", "number,title,url,body,author,headRefOid,headRefName,baseRefName,files,commits");
   const head = fetchPr(clone, number, pr.baseRefName);
   if (head !== pr.headRefOid) throw new Error(`fetched ${short(head)} but the PR's head is ${short(pr.headRefOid)}; rerun`);
-  if (!fs.existsSync(path.join(worktree, ".git"))) exclusively(clone, () => git(clone, "worktree", "add", "--detach", worktree, head));
+  if (!fs.existsSync(path.join(worktree, ".git"))) git(clone, "worktree", "add", "--detach", worktree, head);
   else {
     restoreGitVersion(worktree);
     git(worktree, "checkout", "--quiet", "--force", "--detach", head);
-    git(worktree, "clean", "-fdqx", "-e", "bin/", "-e", "obj/", "-e", "node_modules/");
+    git(worktree, "clean", "-fdqx");
   }
-  shortenGitVersion(worktree);
+  if (deep) shortenGitVersion(worktree);
   const mergeBase = git(clone, "merge-base", `origin/${pr.baseRefName}`, head);
   const round = Number(roundArg ?? 1);
   const lastHead = lastHeadArg && lastHeadArg !== "-" ? lastHeadArg : null;
   const dir = path.join(HOME, "runs", `${split(repo).name}-${number}-${short(head)}-r${round}`);
   fs.mkdirSync(dir, { recursive: true });
+  for (const f of ["verdict.json", "verified.json"]) fs.rmSync(path.join(dir, f), { force: true });
   const files = pr.files.map((f) => f.path);
   const diff = run("git", ["diff", mergeBase, head], { cwd: clone });
   fs.writeFileSync(path.join(dir, "diff.patch"), diff);
@@ -327,7 +251,7 @@ function prepare(args) {
   fs.writeFileSync(path.join(dir, "overlaps.json"), JSON.stringify(overlaps(repo, clone, number, head, files), null, 2));
   const meta = {
     repo, number, title: pr.title, url: pr.url, author: pr.author?.login, body: pr.body, base: pr.baseRefName, head, mergeBase,
-    round, lastRound: round >= LAST_ROUND, lastHead, worktree, files,
+    round, lastRound: round >= LAST_ROUND, lastHead, worktree, deep, files,
     testFiles: files.filter((f) => TEST_PATH.test(f)), productFiles: files.filter((f) => !TEST_PATH.test(f)),
     deltaFiles, merges, commits: pr.commits.map((c) => `${short(c.oid)} ${c.messageHeadline}`),
   };
@@ -359,7 +283,7 @@ const renderFinding = (f) => {
 const bullets = (v) => (Array.isArray(v) ? v : [v ?? ""]).map((x) => String(x).trim()).filter(Boolean).map((x) => `- ${x}`);
 const listItem = (f) => `- ${SEVERITY[f.severity].emoji} ${where(f)}: ${f.defect}`;
 
-function validateVerdict(v) {
+function validateVerdict(v, name = "verified.json") {
   const errors = [];
   for (const [i, f] of (v.findings ?? []).entries()) {
     if (!SEVERITY[f.severity]) errors.push(`finding ${i}: severity ${f.severity}`);
@@ -370,7 +294,19 @@ function validateVerdict(v) {
     if (!["fixed", "still_open", "accepted", "rejected", "correction"].includes(r.kind)) errors.push(`reply ${i}: kind ${r.kind}`);
     if (!r.thread_id) errors.push(`reply ${i}: no thread_id`);
   }
-  if (errors.length) throw new Error(`verified.json is malformed:\n${errors.join("\n")}`);
+  if (errors.length) throw new Error(`${name} is malformed:\n${errors.join("\n")}`);
+}
+
+function validate([file]) {
+  validateVerdict(JSON.parse(fs.readFileSync(file, "utf8")), path.basename(file));
+  console.log(`${file}: valid`);
+}
+
+function needsVerify([dir]) {
+  const v = JSON.parse(fs.readFileSync(path.join(dir, "verdict.json"), "utf8"));
+  const rebuttal = (v.replies ?? []).some((r) => r.rebuttal);
+  const blocking = (v.findings ?? []).some((f) => BLOCKING.has(f.severity));
+  console.log(rebuttal ? "max" : blocking ? "verify" : "skip");
 }
 
 function plan(dir) {
@@ -492,17 +428,20 @@ async function notifyReady(p) {
   await slack({ repo, pr: String(number), title: title ?? "", url: url ?? `https://github.com/${repo}/pull/${number}`, summary });
 }
 
-async function checkRun([log, ...flags]) {
+async function checkRun([log]) {
   const results = fs.readFileSync(log, "utf8").split(/\r?\n/).flatMap((l) => { try { const o = JSON.parse(l); return o.type === "result" ? [o] : []; } catch { return []; } });
   const result = results.at(-1);
   if (result && !result.is_error) return;
   process.exitCode = 4;
-  const text = String(result?.result ?? `the review run ended with no result (${log})`).split(/\r?\n/)[0];
-  console.log(`review run failed: ${text}`);
-  const last = fs.existsSync(ALERTED) ? JSON.parse(fs.readFileSync(ALERTED, "utf8")) : null;
-  if (last?.text === text && Date.now() - last.at < ALERT_QUIET_MS) return console.log(`already alerted at ${new Date(last.at).toISOString()}: ${text}`);
-  fs.writeFileSync(ALERTED, JSON.stringify({ at: Date.now(), text }));
-  await slack({ repo: "auto-review", pr: "-", title: flags.includes("--now") ? "Auto-review: a review-now run failed" : "Auto-review stopped: a review run failed", url: "https://github.com/pulls/review-requested", summary: text });
+  console.log(`claude run failed: ${String(result?.result ?? `ended with no result (${log})`).split(/\r?\n/)[0]}`);
+}
+
+async function alert([title, ...text]) {
+  const summary = text.join(" ").split(/\r?\n/)[0];
+  const last = readJson(ALERTED);
+  if (last?.text === summary && Date.now() - last.at < ALERT_QUIET_MS) return console.log(`already alerted at ${new Date(last.at).toISOString()}: ${summary}`);
+  fs.writeFileSync(ALERTED, JSON.stringify({ at: Date.now(), text: summary }));
+  await slack({ repo: "auto-review", pr: "-", title, url: "https://github.com/pulls/review-requested", summary });
 }
 
 async function slack(fields) {
@@ -519,23 +458,36 @@ async function slack(fields) {
   }
 }
 
-function lock(args = []) {
-  if (process.env.AUTO_REVIEW_LOCKED) return console.log("run.sh holds the lock");
+function lock([flag, pidArg]) {
+  const pid = Number(pidArg);
+  if (flag !== "--pid" || !Number.isInteger(pid) || !alive(pid)) throw new Error(`lock --pid ${pidArg}: not a live process`);
   fs.mkdirSync(HOME, { recursive: true });
-  if (fs.existsSync(LOCK) && !args.includes("--renew")) {
-    const held = JSON.parse(fs.readFileSync(LOCK, "utf8"));
-    if (Date.now() - held.at < LOCK_TTL_MS) {
-      console.error(`another run holds the lock since ${new Date(held.at).toISOString()}`);
+  for (;;) {
+    try {
+      return fs.writeFileSync(LOCK, JSON.stringify({ at: Date.now(), pid }), { flag: "wx" });
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+    }
+    let held;
+    try { held = readJson(LOCK); } catch { held = { pid: -1, at: Date.now() }; }
+    if (held?.pid === pid) return;
+    if (held && (held.pid === -1 || alive(held.pid))) {
+      console.error(`pid ${held.pid} holds the lock since ${new Date(held.at).toISOString()}`);
       process.exit(3);
     }
+    fs.rmSync(LOCK, { force: true });
   }
-  fs.writeFileSync(LOCK, JSON.stringify({ at: Date.now(), pid: process.ppid, ...(args.includes("--claims") ? { claims: true } : {}) }));
+}
+
+function unlock([flag, pidArg]) {
+  const held = readJson(LOCK);
+  if (held && (flag !== "--pid" || held.pid === Number(pidArg))) fs.rmSync(LOCK, { force: true });
 }
 
 const [verb, ...rest] = process.argv.slice(2);
-const verbs = { lock, unlock: () => process.env.AUTO_REVIEW_LOCKED || fs.rmSync(LOCK, { force: true }), candidates, next, prepare, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])), "check-run": checkRun, claim, release, claims: () => console.log(JSON.stringify(liveClaims(), null, 2)) };
+const verbs = { lock, unlock, candidates, next, prepare, "needs-verify": needsVerify, validate, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])), "check-run": checkRun, alert };
 if (!verbs[verb]) {
-  console.error("usage: auto-review.mjs lock [--renew] [--claims] | unlock | claim --pid <winpid> <PR>... | release --pid <winpid> [<PR>...] | claims | next [--exclude <file>] | candidates [--force] [<owner/repo>#<n>...] | prepare <owner/repo>#<n> <round> <lastHead|-> [<slot>] | post <run dir> [--dry-run] | notify <run dir> | check-run <log> [--now]");
+  console.error("usage: auto-review.mjs lock --pid <winpid> | unlock [--pid <winpid>] | candidates [--force] [<PR>...] | next [--force] [<PR>...] | prepare <PR> <round> <lastHead|-> [--deep] | needs-verify <run dir> | validate <verdict file> | post <run dir> [--dry-run] | plan <run dir> | notify <run dir> | check-run <log> | alert <title> <text>");
   process.exit(2);
 }
 try {

@@ -2,15 +2,15 @@
 
 A reviewer wrote `<run dir>/verdict.json` for the pull request in `<run dir>/pr.json`. You are its adversary: each
 finding is wrong until the code proves it. Read-only, like the reviewer: `cd` into `pr.json`'s `worktree` (the head,
-detached, already built); a hook refuses writes to git and GitHub. Commands run in the foreground and your turn ends
-only once `verified.json` is written, as the reviewer's brief says.
+detached); a hook refuses writes to git and GitHub. Commands run in the foreground and your turn ends only once
+`verified.json` is written, as the reviewer's brief says. You build and run tests only when your prompt says "Deep."
 
 For each finding, from the code and not from the reviewer's wording:
 
 1. Read the lines it names and what calls them. Is the scenario reachable at this head? Does a guard, a caller or a
-   test already handle it?
-2. When it is CONFIRMED by a probe, rerun the probe (an untracked test in the worktree, run filtered, deleted after);
-   when it is PLAUSIBLE and a cheap probe can settle it, write one.
+   test already handle it? A finding CONFIRMED by a CI check: is the check red at this head, and on this change?
+2. Deep only: when it is CONFIRMED by a probe, rerun the probe (an untracked test in the worktree, run filtered,
+   deleted after); when it is PLAUSIBLE and a cheap probe can settle it, write one.
 3. Decide: **keep** (confirmed or still plausible and blocking if true), **upgrade** to CONFIRMED (your probe shows
    it), **downgrade** severity (real but smaller), or **drop** (unreachable, already handled, a matter of taste raised
    above Nit, or a restatement of another finding).
@@ -21,5 +21,6 @@ Each reply with `"rebuttal": true`: re-check the author's argument at full depth
 Write `<run dir>/verified.json`: the same shape as `verdict.json` with the kept findings and replies as you settled
 them, plus `"dropped": [{"finding": "<defect>", "why": "…"}]`. Keep `notes`, correcting what you found
 wrong and holding them to `reviewer.md`'s length limits; your own process (what you reread or reran) stays out of
-them. Done when every finding and reply has a decision and the worktree is back at the head (`git status
---porcelain` empty).
+them. Done when every finding and reply has a decision,
+`node C:/Users/U005017/.claude/skills/auto-review/auto-review.mjs validate <run dir>/verified.json` prints `valid`, and
+the worktree is back at the head (`git status --porcelain` empty).
