@@ -1,7 +1,6 @@
 # Git & PRs
 
 ## Branches
-- Work on the main repo checkout — do not create separate worktrees.
 - Always branch from `master` (or main): `git checkout -b <branch-name> master` unless Eduardo instructs otherwise.
 - When asked to update a branch from master/main, always `git pull` on master first to get the latest remote changes, then merge into the branch.
 
