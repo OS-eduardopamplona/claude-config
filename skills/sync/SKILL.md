@@ -11,7 +11,7 @@ argument-hint: "[sibling name or local_ id]"
 The layout of the family files is in the `session-family` rule.
 
 1. **Folder.** Use the "Shared notes folder" your prompt names. If you are a parent, also use `side-session-notes/<own local_ id>/`.
-2. **Read.** Read `STATE.md` and every `<name>.md` except your own, along with each file's modified time (`ls -l --time-style=+%FT%T`). With an argument, read only that sibling's file and its `STATE.md` row.
+2. **Read.** Read `STATE.md` (when it points to an orchestration's state file, read that file instead) and every `<name>.md` except your own, along with each file's modified time (`ls -l --time-style=+%FT%T`). With an argument, read only that sibling's file and its `STATE.md` row.
 3. **Live state.**
    - Run `list_sessions {"linked": true}` to see whether each sibling is running, idle or archived.
    - For every PR the files list, run `gh pr view <n> --repo <owner/repo> --json state,isDraft,reviewDecision,reviews,updatedAt,statusCheckRollup`, and count the checks as pass/fail/pending.

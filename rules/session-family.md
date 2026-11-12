@@ -5,6 +5,7 @@ A family is a parent session and the sessions it started with `start_session`. I
 ## Where
 - A child's family folder is the "Shared notes folder" its prompt names: `side-session-notes/<starter's local_ id>/`, the folder of the session that started it.
 - A parent keeps its own children's folder at `side-session-notes/<own local_ id>/`, beside that one (`get_session` "self" gives the id).
+- An orchestrator's `STATE.md` is one line pointing to `~/.claude/orchestrations/<KEY>/STATE.md`, which the `orchestrate` skill defines; read and update that file instead.
 - The parent owns `STATE.md`. Each child writes only `<name>.md`, using the `name` that `list_sessions {"linked": true}` gives it. Other files in the folder, such as findings and briefs, stay as they are.
 
 ## STATE.md (parent)
