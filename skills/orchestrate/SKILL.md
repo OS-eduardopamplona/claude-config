@@ -25,7 +25,6 @@ override the defaults here. Repo specifics (paths, CI, merge policy, Jira transi
   `expires`, delete the old one, and update STATE.md.
 - A worker's turn-end note quotes only its first 400 characters. Its RESULT block is in its `<name>.md` in your family
   folder.
-- You have linked children: at the context handoff note, ask Eduardo for `/compact` instead of handing off.
 
 ## Start
 
