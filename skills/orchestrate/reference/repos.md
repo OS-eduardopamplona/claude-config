@@ -24,7 +24,14 @@ Review 61. Eduardo's account `712020:fa0241f3-5314-4e06-8cf8-dd975bf1bb12`.
   `OutSystems.ModelExtensions`. Failed tasks: `az devops invoke --organization https://dev.azure.com/OutSystemsRD --area build --resource timeline --route-parameters project=ArtifactRepository buildId=<id> --api-version 7.1`,
   then `--resource logs ... logId=<id>`. Infra rerun:
   `az pipelines build queue --organization https://dev.azure.com/OutSystemsRD --project ArtifactRepository --definition-id 432 --branch <headRefName>`.
-- **Merge:** the worker turns on auto-merge once green.
+- **Ready-PR cap:** at most 20 PRs are ready at once (`.github/workflows/pr-limit.yml`). A PR marked ready over the
+  cap goes back to draft, its build is canceled and its auto-merge is off. A draft gets no PR build
+  (`pr.drafts: false`), so the worker validates it with a 432 build queued on its branch (the Infra rerun command).
+  Once that build is green, while 20 are ready (`gh pr list --state open --json isDraft`), the worker adds the
+  `waiting-for-pr-slot` label instead of marking it ready. `pr-promote.yml` marks labeled drafts ready, oldest
+  created first. Never apply `bypass-pr-limit` without Eduardo.
+- **Merge:** a draft can't carry auto-merge. The worker turns it on once the PR is ready (promoted or marked) and the
+  orchestrator pings it on promotion.
 - **Cloud:** environment `ts-agent-p1`. Restore needs the private NuGet feed, the `@outsystems` npm packages and Node
   22.18+; a restore failure means the ticket goes to a local worker.
 

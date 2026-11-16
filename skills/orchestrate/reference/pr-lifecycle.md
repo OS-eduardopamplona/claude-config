@@ -21,7 +21,8 @@ newer than `Checked`. Pending checks skip CI only.
 | PR state | Reaction |
 |---|---|
 | Opened | the worker binds it and turns on Auto-fix; if not, SendMessage it to |
-| Green | `gh pr ready` if draft; ticket → In Code Review; one PR-link comment per ticket; merge per the profile |
+| Green | `gh pr ready` if draft, or queue it per the profile's ready-PR cap; ticket → In Code Review; one PR-link comment per ticket; merge per the profile |
+| Promoted from a queue | the worker turns on auto-merge; the PR's fresh build is its CI from here |
 | Red, test failure | failing tests and their first error lines → the worker, verbatim |
 | Red, infra (agent lost, timeout, no test failure) | rerun per the profile yourself; `Head` → `—` |
 | Conflicting | the worker merges the default branch, resolves, runs the targeted tests, pushes |

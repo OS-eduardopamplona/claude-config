@@ -56,7 +56,9 @@ First add a `queued` row for every To Do sub-task without one, and set each `hel
    or the Log's newest `tick` line is over an hour old, say so as the first line of your reply ("<KEY> has no
    orchestrator since <time>: resume it from a typed turn") and log it once. Don't repeat that line until a tick runs
    again.
-1. **Gate.** Stop when active workers reach `Capacity` or the machine is busy (repos.md, Shared machine).
+1. **Gate.** Stop when active workers reach `Capacity` or the machine is busy (repos.md, Shared machine). A worker
+   is active while its session is running or its PR needs a reaction (red, conflicting, a review to answer). A worker
+   whose PR only waits for a review, a ready-PR slot or CI on a remote agent is parked and holds no slot.
 2. **Claim.** Take pickable tickets in rank order. On a turn that can start sessions, transition the ticket to In
    Progress first, so a concurrent pickup skips it, then start its worker with the brief in
    [briefs.md](reference/briefs.md). On any other turn, propose the same brief as a card and leave Jira as it is.
