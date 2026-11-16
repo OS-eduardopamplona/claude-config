@@ -52,13 +52,20 @@ orchestration's repos has its key in the title (`gh pr list --repo <repo> --sear
 First add a `queued` row for every To Do sub-task without one, and set each `held` row whose blocker cleared to
 `queued`.
 
-1. **Gate.** Stop with one Log line when active workers reach `Capacity` or the machine is busy (repos.md, Shared
-   machine).
+0. **Orchestrator alive.** When you are the scheduled task, `get_session` the `Orchestrator` id. If it is not found,
+   or the Log's newest `tick` line is over an hour old, say so as the first line of your reply ("<KEY> has no
+   orchestrator since <time>: resume it from a typed turn") and log it once. Don't repeat that line until a tick runs
+   again.
+1. **Gate.** Stop when active workers reach `Capacity` or the machine is busy (repos.md, Shared machine).
 2. **Claim.** Take pickable tickets in rank order. On a turn that can start sessions, transition the ticket to In
    Progress first, so a concurrent pickup skips it, then start its worker with the brief in
    [briefs.md](reference/briefs.md). On any other turn, propose the same brief as a card and leave Jira as it is.
+   A card that stays unstarted while a slot is free for 2 hours is Eduardo's call: set the row to `waiting-eduardo`
+   with "card <task_id> unstarted since <time>", and put it in the next reply's first line. Propose no new card for
+   that ticket until he answers.
 3. **Record.** Row → `working` with the worker's `local_` id; one Log line; when you are the scheduled task, SendMessage
-   the orchestrator one line.
+   the orchestrator one line. A pickup that claims nothing, adds no row and changes no status writes no Log line. Its
+   gate result goes in the reply only.
 
 Done when every pickable ticket has a worker or a card, or the gate stopped you.
 
