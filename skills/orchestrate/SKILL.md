@@ -74,6 +74,8 @@ Done when every pickable ticket has a worker or a card, or the gate stopped you.
 ## Tick
 
 1. For every `working`, `in-review` and `paused` row, apply [pr-lifecycle.md](reference/pr-lifecycle.md).
+   For each `skipped` row whose ticket is someone else's PR: when that PR merges and the ticket isn't Done, ask
+   Eduardo whether to move it, and on his OK set the row to `done`.
 2. For every worker whose `<name>.md` carries a RESULT block newer than its row's `Checked`: check its `EVIDENCE` with
    one call (the PR, the named test run) before you record it. `done` without a merged PR stays `in-review`; `blocked`
    becomes `blocked` or `waiting-eduardo`; each `OPEN` line becomes a new unassigned sub-task (jira-conventions.md), a
