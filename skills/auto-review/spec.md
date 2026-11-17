@@ -23,8 +23,9 @@ default, one Opus session per PR.
   no GitVersion shortening, no `clean -fdx` exceptions.
 - Fetch under no mutex: runs never overlap.
 - The run dir `runs/<repo>-<n>-<sha>-r<round>/` holds `pr.json`, `diff.patch`, `delta.patch`, `threads.json`,
-  `conversation.json`, `checks.txt` (CI status and failed test names) and `overlaps.json` (`git merge-tree` against
-  the other open PRs, so the reviewer notes semantic conflicts).
+  `conversation.json`, `checks.txt` (CI status and failed test names), `base.patch` (what the base changed in the PR's
+  files since the merge base; `baseConflicts` in `pr.json` lists files conflicting with the base's tip) and
+  `overlaps.json` (`git merge-tree` against the other open PRs, so the reviewer notes semantic conflicts).
 
 ## What it reviews
 - Round 1: the whole diff. Later rounds: the delta since the last reviewed head plus the status of every open earlier
@@ -33,10 +34,18 @@ default, one Opus session per PR.
   a red check it can tie to master is not.
 - Checklist, by reading the code:
   1. Every new or changed test exercises the changed production path and would fail without it. A test that cannot
-     reach the change is a CONFIRMED finding; one whose assertion may be too weak is PLAUSIBLE.
-  2. Conflict resolutions in merge commits touching the PR's own files.
-  3. Repo rules: `CLAUDE.md`, `.claude/rules`, feature-toggle safety in Model (toggle off == master, real uuid).
-  4. Consumer impact for public API changes (`consumer-impact` skill).
+     reach the change is a CONFIRMED finding; one whose assertion may be too weak is PLAUSIBLE. Tests cover the
+     ticket's scenario and the change's other branches (toggle on, value left out, null/empty).
+  2. Conflict resolutions in merge commits, and clashes with the base's drift that no text conflict shows.
+  3. Repo rules: every rule of `CLAUDE.md` and `.claude/rules`, one by one, on code, tests and the PR body;
+     feature-toggle safety in Model (toggle off == master, real uuid).
+  4. Consumer impact for public, V1 and behaviour-interface changes and consumer-read output (`consumer-impact`).
+  5. Tooling PRs: secrets, permissions, executable files an agent can rewrite, timeouts, swallowed failures.
+  6. The code read: completeness (every sibling site of a changed behaviour), left-out and edge input, failure paths,
+     test helpers as code, and purpose end to end.
+- Added Nov 2026 after comparing 150 reviewed PRs with teammates' reviewers: ~190 real defects missed, mostly
+  incomplete changes, base-drift clashes, unreviewed test helpers, consumer impact and repo rules. The reviewer runs
+  at `--effort xhigh`.
 - No local build, no red/green, no probe tests in the scheduled run. `/review-now deep <PR>` restores them for one PR:
   full build, red/green on the changed tests, probe tests.
 - Read-only: the hook blocks git writes, `gh` posting, GraphQL mutations, and `post`/`lock`/`unlock` from inside the
@@ -55,8 +64,8 @@ default, one Opus session per PR.
   `— Automated review by Claude`.
 
 ## Convergence
-- Round 3 is the last: only CONFIRMED blocking findings on delta lines are posted; PLAUSIBLE ones go in one "Left to
-  the human reviewer" note.
+- Round 3 is the last: only CONFIRMED blocking findings are posted (anywhere in the PR); PLAUSIBLE blocking ones on
+  delta lines go in one "Left to the human reviewer" note.
 - A Minor or Nit is never re-raised once posted.
 
 ## Replies

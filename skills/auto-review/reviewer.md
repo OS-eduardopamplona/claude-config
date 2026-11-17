@@ -9,13 +9,15 @@ once `verdict.json` is written: the run is headless and exits when no agent is w
 A command moved to the background on its timeout is waited for with a foreground `until` loop on its output file.
 
 Read `pr.json` first: `worktree` (the head, detached; `cd` there for every command), `round`, `lastRound`, `lastHead`,
-`mergeBase`, `files`, `testFiles`, `productFiles`, `deltaFiles`, `merges`. The PR's own rules are the worktree's
+`mergeBase`, `files`, `testFiles`, `productFiles`, `deltaFiles`, `merges`, `baseConflicts`. The PR's own rules are the worktree's
 `CLAUDE.md`, `.claude/rules/` and the CLAUDE.md files under the changed folders: read them before the code.
 
 **Scope.** Round 1 reviews the whole `diff.patch`. A later round reviews `delta.patch` (the change since `lastHead`;
 when the base moved, base changes inside the PR's files show there too: judge only what the PR changed) and the status
-of every open thread in `threads.json`, other reviewers' and bots' included. From round 3 on (`lastRound`), raise
-findings only on lines the delta changed; a doubt elsewhere goes in `notes`.
+of every open thread in `threads.json`, other reviewers' and bots' included. A later round still checks that the whole
+PR holds together at the new head: the delta can break code an earlier round passed. From round 3 on (`lastRound`),
+raise findings on lines the delta changed, plus CONFIRMED Blockers and Majors anywhere in the PR; a doubt elsewhere
+goes in `notes`.
 
 ## Checklist, in order, before the code read
 
@@ -28,16 +30,36 @@ You build nothing and run no tests: the PR's CI is the build and test oracle (th
    fail without it. Trace each from its arrange/act to the changed lines in `productFiles`. A test that cannot reach the
    change is **vacuous**: a 🟠 Major, CONFIRMED. One that reaches it with an assertion that may not tell the change
    from master is a 🟠 Major, PLAUSIBLE. No test for a behaviour change is a finding of its own (Major when the change
-   fixes a bug).
-3. **Merges.** For each commit in `merges`, `git show --remerge-diff <sha>` shows its conflict resolutions; check those
-   touching the PR's files. `overlaps.json` lists other open PRs sharing files, with the files `git merge-tree`
-   conflicts on: name semantic clashes in `notes`.
-4. **Repo rules.** The rules you read above. In OutSystems.Model, a feature toggle off must behave exactly as master,
-   and a new toggle's id is a real uuid.
-5. **Consumer impact.** A change to a public type or member, or to output a consumer reads: invoke the
-   `consumer-impact` skill and carry its verdict.
+   fixes a bug). Also check each test asserts the ticket's scenario, not only a line it passes through, and covers
+   the change's other branches (the toggle on, the value left out, the empty and null input).
+3. **Merges and drift.** For each commit in `merges`, `git show --remerge-diff <sha>` shows its conflict resolutions;
+   check those touching the PR's files. `base.patch` is what the base changed since `mergeBase` in the PR's files, and
+   `pr.json`'s `baseConflicts` the files that conflict with the base's tip. Look for clashes no text conflict shows: a
+   member both sides add, an overload or member the base removed or renamed that the PR still calls, a sibling PR's
+   change the branch carries a stale copy of. One that breaks the build or behaviour after merge is a 🔴 Blocker.
+   `overlaps.json` lists other open PRs sharing files, with the files `git merge-tree` conflicts on: name semantic
+   clashes with them in `notes`.
+4. **Repo rules.** Apply every rule you read above, one by one, to the diff, the tests and the PR's title and body:
+   test placement and naming, test categories, which APIs tests may use, comment rules (TODOs carry a ticket), the PR
+   template, Observed-by lines. In OutSystems.Model, a feature toggle off must behave exactly as master, and a new
+   toggle's id is a real uuid.
+5. **Consumer impact.** A change to a public or V1 type or member (new, changed or removed), a behaviour interface, or
+   output a consumer reads (generated text, ChangeSet, validation messages, goldens): invoke the `consumer-impact` skill
+   and carry its verdict, including consumers whose code the diff does not show.
+6. **Tooling.** For scripts, pipelines, agent tooling and test infrastructure: secrets or tokens reaching processes
+   or logs they should not, permissions wider than the job needs, files an agent or untrusted input can rewrite and
+   then execute, timeouts longer than their step, errors caught and swallowed, a failed run reported as clean.
 
-Then read the code: every changed line and the callers it reaches.
+Then read the code: every changed line and the callers it reaches, and with them:
+
+- **Completeness.** For each behaviour the PR changes, find every other place that does the same thing: the same
+  helper, the same property or name written elsewhere, the sibling path (the other screen kind, the other module type,
+  the caller without the new argument). Each one the PR leaves unchanged is a finding unless it is meant to differ.
+- **Left out and edge input.** Trace what happens when the value is left out, null, empty, or already at its target,
+  and when a write-back keeps or drops what the reader did not mention.
+- **Failure paths.** Walk each throw, early return and catch the change adds or reaches: what state is left behind.
+- **Test code is code.** Helpers, specimens, fixtures and builders the PR adds are reviewed like production code.
+- **Purpose.** Does the change do what the ticket and PR body say, end to end, not only compile and pass?
 
 ## Deep
 

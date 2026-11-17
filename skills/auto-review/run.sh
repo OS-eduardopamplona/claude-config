@@ -41,7 +41,7 @@ review() {
   log="$LOGS/$(date +%Y%m%d-%H%M%S)-$(tr '/#' '--' <<<"${pr#*/}")"
   echo "$pr round $round: reviewing, log $log.jsonl"
   dir=$(ar prepare "$pr" "$round" "$last" $deep) || { fail "$pr: prepare failed"; return 1; }
-  claude_run "$log.jsonl" "Read $S/reviewer.md and follow it. Run dir: $dir.${deep:+ Deep.}" &&
+  claude_run "$log.jsonl" "Read $S/reviewer.md and follow it. Run dir: $dir.${deep:+ Deep.}" --effort xhigh &&
     ar validate "$dir/verdict.json" >/dev/null || { fail "$pr: the reviewer failed ($log.jsonl)"; return 1; }
   verify=$(ar needs-verify "$dir")
   if [ "$verify" = skip ]; then

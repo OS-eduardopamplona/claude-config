@@ -239,6 +239,10 @@ function prepare(args) {
     fs.writeFileSync(path.join(dir, "delta.patch"), run("git", ["diff", lastHead, head, "--", ...scope], { cwd: clone }));
     deltaFiles = git(clone, "diff", "--name-only", lastHead, head, "--", ...scope).split("\n").filter(Boolean);
   }
+  const baseTip = git(clone, "rev-parse", `origin/${pr.baseRefName}`);
+  fs.writeFileSync(path.join(dir, "base.patch"), run("git", ["diff", mergeBase, baseTip, "--", ...files], { cwd: clone }));
+  const baseMerge = tryRun("git", ["merge-tree", "--write-tree", "--name-only", "--no-messages", head, baseTip], { cwd: clone });
+  const baseConflicts = baseMerge.code === 1 ? baseMerge.out.split("\n").slice(1).filter(Boolean) : [];
   const merges = git(clone, "rev-list", "--merges", `${mergeBase}..${head}`).split("\n").filter(Boolean);
   const checks = tryRun("gh", ["pr", "checks", String(number), "-R", repo]);
   fs.writeFileSync(path.join(dir, "checks.txt"), checks.out + checks.err);
@@ -253,7 +257,7 @@ function prepare(args) {
     repo, number, title: pr.title, url: pr.url, author: pr.author?.login, body: pr.body, base: pr.baseRefName, head, mergeBase,
     round, lastRound: round >= LAST_ROUND, lastHead, worktree, deep, files,
     testFiles: files.filter((f) => TEST_PATH.test(f)), productFiles: files.filter((f) => !TEST_PATH.test(f)),
-    deltaFiles, merges, commits: pr.commits.map((c) => `${short(c.oid)} ${c.messageHeadline}`),
+    deltaFiles, merges, baseConflicts, commits: pr.commits.map((c) => `${short(c.oid)} ${c.messageHeadline}`),
   };
   fs.writeFileSync(path.join(dir, "pr.json"), JSON.stringify(meta, null, 2));
   console.log(dir);
@@ -324,9 +328,9 @@ function plan(dir) {
     findings = findings.filter((f) => {
       const onChanged = f.line && deltaAnchors.get(f.file)?.has(f.line);
       if (!SEVERITY[f.severity].blocks) return dropped.push({ f, why: `last round: ${f.severity} not posted` }), false;
-      if (!onChanged) return dropped.push({ f, why: "last round: not on a line this round changed" }), false;
-      if (f.confidence === "PLAUSIBLE") return left.push(f), false;
-      return true;
+      if (f.confidence === "CONFIRMED") return true;
+      if (!onChanged) return dropped.push({ f, why: "last round: plausible, not on a line this round changed" }), false;
+      return left.push(f), false;
     });
   }
   findings = findings.filter((f) => {
