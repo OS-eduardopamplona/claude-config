@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +13,9 @@ const REPOS = {
 };
 const HOME = path.join(os.homedir(), ".claude", "auto-review");
 const LOCK = path.join(HOME, "lock.json");
-const WEBHOOK_FILE = path.join(HOME, "slack-webhook.txt");
+const QUEUE = path.join(HOME, "requested.txt");
+const LOCK_TTL_MS = 3 * 60 * 60 * 1000;
+const OPTIONS = new Set(["dry-run", "deep"]);
 const ALERTED = path.join(HOME, "alerted.json");
 const ALERT_QUIET_MS = 4 * 60 * 60 * 1000;
 const MAX_PER_RUN = 4;
@@ -45,14 +48,6 @@ const ghJson = (...args) => JSON.parse(gh(...args));
 const ghPaged = (endpoint) => JSON.parse(gh("api", "--paginate", "--slurp", endpoint)).flat();
 const git = (cwd, ...args) => run("git", args, { cwd }).trim();
 const readJson = (file) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null);
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === "EPERM";
-  }
-};
 const short = (sha) => String(sha ?? "").slice(0, 8);
 const split = (full) => {
   const [owner, name] = full.split("/");
@@ -137,8 +132,10 @@ function select(args) {
   let picked = explicit;
   if (!explicit.length) {
     const key = (p) => `${p.repository.nameWithOwner}#${p.number}`;
-    const requestedKeys = new Set(searchPrs("user-review-requested:@me").map(key));
-    picked = searchPrs("is:pr")
+    const requested = searchPrs("user-review-requested:@me");
+    const requestedKeys = new Set(requested.map(key));
+    const found = new Map([...requested, ...searchPrs("reviewed-by:@me"), ...searchPrs("commenter:@me")].map((p) => [key(p), p]));
+    picked = [...found.values()]
       .filter((p) => !p.isDraft && p.author?.login !== ME && !p.author?.is_bot && !String(p.author?.login).startsWith("app/"))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .map((p) => ({ repo: p.repository.nameWithOwner, number: p.number, requested: requestedKeys.has(key(p)) }));
@@ -147,6 +144,7 @@ function select(args) {
     try { return { ...assess(p.repo, p.number, { force }), requested: p.requested }; }
     catch (e) { return { repo: p.repo, number: p.number, skip: `assessment failed, retried next run: ${String(e.message).split(/\r?\n/)[0]}` }; }
   });
+  if (!explicit.length) for (const a of assessed) if (!a.skip && !a.requested && !a.lastHead) a.skip = `not requested from ${ME} and not reviewed before`;
   const due = assessed.filter((a) => !a.skip);
   if (!explicit.length) due.sort((a, b) => priority(a) - priority(b));
   return { explicit: explicit.length > 0, due, skipped: assessed.filter((a) => a.skip).map((a) => `${a.repo}#${a.number}: ${a.skip}`) };
@@ -158,9 +156,36 @@ function candidates(args) {
 }
 
 function next(args) {
-  const { explicit, due, skipped } = select(args);
+  const options = args.filter((a) => OPTIONS.has(a));
+  const { explicit, due, skipped } = select(args.filter((a) => !OPTIONS.has(a)));
   for (const s of explicit ? skipped : []) console.error(`skipped ${s}`);
-  for (const a of explicit ? due : due.slice(0, MAX_PER_RUN)) console.log(`${a.repo}#${a.number} ${a.round} ${a.lastHead ?? "-"}`);
+  for (const a of explicit ? due : due.slice(0, MAX_PER_RUN)) console.log([`${a.repo}#${a.number}`, a.round, a.lastHead ?? "-", ...options].join(" "));
+}
+
+function queue(args) {
+  const prs = args.filter((a) => !OPTIONS.has(a));
+  if (!prs.length) throw new Error("queue: no PRs");
+  prs.forEach(parsePrArg);
+  const options = args.filter((a) => OPTIONS.has(a));
+  fs.mkdirSync(HOME, { recursive: true });
+  fs.appendFileSync(QUEUE, prs.map((pr) => [...options, pr].join(" ") + "\n").join(""));
+  for (const pr of prs) console.log(`${pr}: queued behind the run in progress`);
+}
+
+function take() {
+  const taking = `${QUEUE}.${process.pid}`;
+  try {
+    fs.renameSync(QUEUE, taking);
+  } catch (e) {
+    if (e.code === "ENOENT") return;
+    throw e;
+  }
+  const lines = fs.readFileSync(taking, "utf8").split(/\r?\n/).filter(Boolean);
+  fs.rmSync(taking, { force: true });
+  for (const line of lines) {
+    try { next(["--force", ...line.split(" ")]); }
+    catch (e) { console.error(`skipped queued "${line}": ${String(e.message).split(/\r?\n/)[0]}`); }
+  }
 }
 
 function threadsOf(repo, number) {
@@ -434,75 +459,60 @@ async function post(args) {
     const res = JSON.parse(gh("api", "--method", "POST", `repos/${repo}/issues/${number}/comments`, "--input", payload));
     console.log(res.html_url);
   }
-  if (p.ready) await notifyReady(p);
+  if (p.ready) notifyReady(p);
 }
 
-async function notifyReady(p) {
+function notifyReady(p) {
   const { repo, number, round, title, url } = p.meta;
-  const summary = `Round ${round}: no blocking issues${p.tally ? ` (${p.tally}, the author decides)` : ""}.`;
-  await slack({ repo, pr: String(number), title: title ?? "", url: url ?? `https://github.com/${repo}/pull/${number}`, summary });
+  const link = url ?? `https://github.com/${repo}/pull/${number}`;
+  console.log(`DM: [${repo.split("/")[1]}#${number}](${link}) ${title ?? ""}: round ${round}, no blocking issues${p.tally ? ` (${p.tally}, the author decides)` : ""}.`);
 }
 
-async function checkRun([log]) {
-  const results = fs.readFileSync(log, "utf8").split(/\r?\n/).flatMap((l) => { try { const o = JSON.parse(l); return o.type === "result" ? [o] : []; } catch { return []; } });
-  const result = results.at(-1);
-  if (result && !result.is_error) return;
-  process.exitCode = 4;
-  console.log(`claude run failed: ${String(result?.result ?? `ended with no result (${log})`).split(/\r?\n/)[0]}`);
-}
-
-async function alert([title, ...text]) {
+function alert([title, ...text]) {
   const summary = text.join(" ").split(/\r?\n/)[0];
   const last = readJson(ALERTED);
   if (last?.text === summary && Date.now() - last.at < ALERT_QUIET_MS) return console.log(`already alerted at ${new Date(last.at).toISOString()}: ${summary}`);
-  fs.writeFileSync(ALERTED, JSON.stringify({ at: Date.now(), text: summary }));
-  await slack({ repo: "auto-review", pr: "-", title, url: "https://github.com/pulls/review-requested", summary });
-}
-
-async function slack(fields) {
-  if (!fs.existsSync(WEBHOOK_FILE)) return console.log(`no ${WEBHOOK_FILE}: Slack not notified`);
-  try {
-    const res = await fetch(fs.readFileSync(WEBHOOK_FILE, "utf8").trim(), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(fields),
-    });
-    console.log(res.ok ? "Slack notified" : `Slack webhook answered ${res.status}: ${await res.text()}`);
-  } catch (e) {
-    console.log(`Slack webhook failed: ${e.message}`);
-  }
-}
-
-function lock([flag, pidArg]) {
-  const pid = Number(pidArg);
-  if (flag !== "--pid" || !Number.isInteger(pid) || !alive(pid)) throw new Error(`lock --pid ${pidArg}: not a live process`);
   fs.mkdirSync(HOME, { recursive: true });
+  fs.writeFileSync(ALERTED, JSON.stringify({ at: Date.now(), text: summary }));
+  console.log(`DM: **${title}** ${summary}`);
+}
+
+function lock([token]) {
+  fs.mkdirSync(HOME, { recursive: true });
+  const mine = token ?? crypto.randomUUID();
   for (;;) {
     try {
-      return fs.writeFileSync(LOCK, JSON.stringify({ at: Date.now(), pid }), { flag: "wx" });
+      fs.writeFileSync(LOCK, JSON.stringify({ at: Date.now(), token: mine }), { flag: "wx" });
+      return console.log(mine);
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
     }
     let held;
-    try { held = readJson(LOCK); } catch { held = { pid: -1, at: Date.now() }; }
-    if (held?.pid === pid) return;
-    if (held && (held.pid === -1 || alive(held.pid))) {
-      console.error(`pid ${held.pid} holds the lock since ${new Date(held.at).toISOString()}`);
+    try { held = readJson(LOCK); } catch { held = { at: Date.now() }; }
+    if (token && held?.token === token) {
+      fs.writeFileSync(LOCK, JSON.stringify({ at: Date.now(), token }));
+      return console.log(token);
+    }
+    if (held && Date.now() - held.at < LOCK_TTL_MS) {
+      console.error(`another run holds the lock since ${new Date(held.at).toISOString()}`);
       process.exit(3);
     }
     fs.rmSync(LOCK, { force: true });
   }
 }
 
-function unlock([flag, pidArg]) {
-  const held = readJson(LOCK);
-  if (held && (flag !== "--pid" || held.pid === Number(pidArg))) fs.rmSync(LOCK, { force: true });
+function unlock([token]) {
+  if (fs.existsSync(QUEUE) && fs.statSync(QUEUE).size) {
+    console.log("PRs are queued: review what take prints, then unlock again");
+    process.exit(4);
+  }
+  if (readJson(LOCK)?.token === token) fs.rmSync(LOCK, { force: true });
 }
 
 const [verb, ...rest] = process.argv.slice(2);
-const verbs = { lock, unlock, candidates, next, prepare, "needs-verify": needsVerify, validate, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])), "check-run": checkRun, alert };
+const verbs = { lock, unlock, queue, take, candidates, next, prepare, "needs-verify": needsVerify, validate, post, plan: (a) => console.log(renderPlan(plan(a[0]))), notify: (a) => notifyReady(plan(a[0])), alert };
 if (!verbs[verb]) {
-  console.error("usage: auto-review.mjs lock --pid <winpid> | unlock [--pid <winpid>] | candidates [--force] [<PR>...] | next [--force] [<PR>...] | prepare <PR> <round> <lastHead|-> [--deep] | needs-verify <run dir> | validate <verdict file> | post <run dir> [--dry-run] | plan <run dir> | notify <run dir> | check-run <log> | alert <title> <text>");
+  console.error("usage: auto-review.mjs lock [<token>] | unlock <token> | queue [dry-run] [deep] <PR>... | take | candidates [--force] [<PR>...] | next [--force] [dry-run] [deep] [<PR>...] | prepare <PR> <round> <lastHead|-> [--deep] | needs-verify <run dir> | validate <verdict file> | post <run dir> [--dry-run] | plan <run dir> | notify <run dir> | alert <title> <text>");
   process.exit(2);
 }
 try {

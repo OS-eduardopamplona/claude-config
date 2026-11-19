@@ -2,18 +2,22 @@
 
 Derived from Ruben's, Francisco's and Nuno's reviewers and the RDMST-5044 loop reviewer (raw data:
 `scratchpad/ruben/all.jsonl`). The lean rewrite (Nov 2026) cuts the machine cost: one PR at a time, no local build by
-default, one Opus session per PR.
+default, one Opus subagent per PR. Since Nov 19 2026 the scheduled session itself orchestrates (no `run.sh`, no
+`claude -p`).
 
 ## Trigger
-- Scheduled run on weekdays, hourly at :40 from 08:40 to 19:40 Lisbon (`40 8-19 * * 1-5`).
+- The Claude desktop scheduled task `auto-review`, weekdays hourly at :40 from 08:40 to 19:40 Lisbon
+  (`40 8-19 * * 1-5`), on Sonnet with bypass permissions. Its session follows `SKILL.md`: it orchestrates, Opus
+  subagents review.
 - A run reviews due PRs **one at a time**, at most 4 per run, then exits. A run that finds the lock held exits at once.
-  The lock is a single `lock.json` (pid + start time); a dead pid's lock lapses.
+  The lock is a single `lock.json` (token + time), renewed before each PR; it lapses 3 hours after its last renewal.
 - Picks open, non-draft PRs in OutSystems.Model, OutSystems.ModelExtensions and OutSystems.ModelQL not authored by
-  Eduardo or a bot, updated in the last 7 days. Order: PRs requesting Eduardo (follow-ups, then first rounds), other
-  follow-ups, other first rounds, rounds past the last one.
-- On demand: `/review-now <PRs>`. With no run in progress it reviews them at once, one after the other. With a run in
-  progress it appends them to `requested.txt`, which that run takes next, ahead of its own queue and outside its
-  per-run cap.
+  Eduardo or a bot, updated in the last 7 days, that request Eduardo directly (not through a team) or that it already
+  reviewed (its marker) and have a new head. Order: requested follow-ups, requested first rounds, other follow-ups,
+  rounds past the last one.
+- On demand: `/review-now <PRs>` runs the same flow in the calling session. With a run in progress it appends them to
+  `requested.txt`, which that run takes next, ahead of its own queue and outside its per-run cap; `unlock` refuses
+  while the queue is not empty.
 - Stateless idempotency: hidden `<!-- auto-review head=<full sha> round=<n> -->` in every post. Skip a head already
   marked, and a new head whose only change is a clean merge of the base or the same patch-id. A named PR on a marked
   head is reviewed as the next round (how a rebuttal without a new commit gets its answer).
@@ -45,15 +49,15 @@ default, one Opus session per PR.
      test helpers as code, and purpose end to end.
 - Added Nov 2026 after comparing 150 reviewed PRs with teammates' reviewers: ~190 real defects missed, mostly
   incomplete changes, base-drift clashes, unreviewed test helpers, consumer impact and repo rules. The reviewer runs
-  at `--effort xhigh`.
+  at xhigh effort.
 - No local build, no red/green, no probe tests in the scheduled run. `/review-now deep <PR>` restores them for one PR:
   full build, red/green on the changed tests, probe tests.
-- Read-only: the hook blocks git writes, `gh` posting, GraphQL mutations, and `post`/`lock`/`unlock` from inside the
+- Read-only: the hook (in the global `settings.json`, acting only on the `ar-*` worktrees) blocks git writes, `gh` posting, GraphQL mutations, and `post`/`lock`/`unlock` from inside the
   worktrees.
 
 ## Agents
-- One Opus session per PR does the review and writes `verdict.json`.
-- A verifier session (`--effort max` on a rebuttal) runs **only when the verdict holds a blocking finding** (Blocker/Major) or a rebuttal; it drops
+- One Opus subagent per PR (`effort` xhigh) does the review and writes `verdict.json`.
+- A verifier subagent (`--effort max` on a rebuttal) runs **only when the verdict holds a blocking finding** (Blocker/Major) or a rebuttal; it drops
   what does not survive, writing `verified.json`. Otherwise `verdict.json` is posted as is.
 
 ## Findings
@@ -78,8 +82,11 @@ default, one Opus session per PR.
 - Nothing blocking: one comment "no blocking issues at <sha>", resolved threads listed, @OS-eduardopamplona tagged, and
   a Slack DM. Never approves.
 - A failed run DMs Eduardo on Slack (throttled 4h) and stops the run.
+- Slack DMs go through the Slack connector to Eduardo's own DM: `ar` prints `DM: <text>` lines and the
+  orchestrating session sends them.
 
 ## Removed from the previous design
 Parallel batches (`MAX_PER_RUN` slots, `claims.json`, `tried-<pid>.txt`, slot worktrees `ar-*-2..4`), the fetch mutex,
-local builds and red/green by default, the always-on verifier.
+local builds and red/green by default, the always-on verifier. On Nov 19 2026: `run.sh`, headless `claude -p` runs
+and their logs, the pid lock, the Slack workflow webhook, and reviewing PRs that never requested Eduardo.
 Cleanup on rollout: delete worktrees `ar-model-2..4`, `ar-mx-2..3`, `ar-r4176` (~25 GB) and old `runs/`.
