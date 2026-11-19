@@ -191,6 +191,17 @@ function overlaps(repo, clone, number, head, files) {
     });
 }
 
+function diffPaths(clone, args, paths) {
+  const batches = [[]];
+  let length = 0;
+  for (const p of paths) {
+    if (length + p.length > 16000) batches.push([]), (length = 0);
+    batches.at(-1).push(p);
+    length += p.length + 3;
+  }
+  return batches.filter((b) => b.length).map((b) => run("git", ["diff", ...args, "--", ...b], { cwd: clone })).join("");
+}
+
 function restoreGitVersion(worktree) {
   if (!fs.existsSync(path.join(worktree, GITVERSION))) return;
   tryRun("git", ["update-index", "--no-skip-worktree", GITVERSION], { cwd: worktree });
@@ -236,11 +247,11 @@ function prepare(args) {
   if (lastHead && hasCommit(clone, lastHead)) {
     const lastFiles = git(clone, "diff", "--name-only", git(clone, "merge-base", `origin/${pr.baseRefName}`, lastHead), lastHead).split("\n").filter(Boolean);
     const scope = [...new Set([...files, ...lastFiles])];
-    fs.writeFileSync(path.join(dir, "delta.patch"), run("git", ["diff", lastHead, head, "--", ...scope], { cwd: clone }));
-    deltaFiles = git(clone, "diff", "--name-only", lastHead, head, "--", ...scope).split("\n").filter(Boolean);
+    fs.writeFileSync(path.join(dir, "delta.patch"), diffPaths(clone, [lastHead, head], scope));
+    deltaFiles = diffPaths(clone, ["--name-only", lastHead, head], scope).split("\n").filter(Boolean);
   }
   const baseTip = git(clone, "rev-parse", `origin/${pr.baseRefName}`);
-  fs.writeFileSync(path.join(dir, "base.patch"), run("git", ["diff", mergeBase, baseTip, "--", ...files], { cwd: clone }));
+  fs.writeFileSync(path.join(dir, "base.patch"), diffPaths(clone, [mergeBase, baseTip], files));
   const baseMerge = tryRun("git", ["merge-tree", "--write-tree", "--name-only", "--no-messages", head, baseTip], { cwd: clone });
   const baseConflicts = baseMerge.code === 1 ? baseMerge.out.split("\n").slice(1).filter(Boolean) : [];
   const merges = git(clone, "rev-list", "--merges", `${mergeBase}..${head}`).split("\n").filter(Boolean);
