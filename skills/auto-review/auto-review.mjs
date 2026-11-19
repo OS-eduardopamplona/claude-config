@@ -249,7 +249,7 @@ function prepare(args) {
   const [arg, roundArg, lastHeadArg] = args.filter((a) => !a.startsWith("--"));
   const { repo, number } = parsePrArg(arg);
   const { clone, worktree } = REPOS[repo];
-  const pr = ghJson("pr", "view", String(number), "-R", repo, "--json", "number,title,url,body,author,headRefOid,headRefName,baseRefName,files,commits");
+  const pr = ghJson("pr", "view", String(number), "-R", repo, "--json", "number,title,url,body,author,headRefOid,headRefName,baseRefName,commits");
   const head = fetchPr(clone, number, pr.baseRefName);
   if (head !== pr.headRefOid) throw new Error(`fetched ${short(head)} but the PR's head is ${short(pr.headRefOid)}; rerun`);
   if (!fs.existsSync(path.join(worktree, ".git"))) git(clone, "worktree", "add", "--detach", worktree, head);
@@ -265,7 +265,7 @@ function prepare(args) {
   const dir = path.join(HOME, "runs", `${split(repo).name}-${number}-${short(head)}-r${round}`);
   fs.mkdirSync(dir, { recursive: true });
   for (const f of ["verdict.json", "verified.json"]) fs.rmSync(path.join(dir, f), { force: true });
-  const files = pr.files.map((f) => f.path);
+  const files = git(clone, "diff", "--name-only", mergeBase, head).split("\n").filter(Boolean);
   const diff = run("git", ["diff", mergeBase, head], { cwd: clone });
   fs.writeFileSync(path.join(dir, "diff.patch"), diff);
   let deltaFiles = [];
