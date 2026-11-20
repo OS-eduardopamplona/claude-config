@@ -83,6 +83,9 @@ Done when every pickable ticket has a worker or a card, or the gate stopped you.
 3. Run **Pickup** (cards only, on a cron turn).
 4. Run **Retro** when due.
 5. Reply with one line per row that changed, or one line in total.
+6. When every active row waits on a person or a queue (`waiting-eduardo`, a review approval, a PR slot) and two ticks
+   in a row changed nothing, recreate the tick cron hourly with the same prompt and note it in STATE.md; go back to
+   every 15 minutes when a row moves or Eduardo types.
 
 Done when every active row has this tick's `Checked` time and `Head`.
 
