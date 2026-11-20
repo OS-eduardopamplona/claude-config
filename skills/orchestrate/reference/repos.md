@@ -31,8 +31,8 @@ Review 61. Eduardo's account `712020:fa0241f3-5314-4e06-8cf8-dd975bf1bb12`.
   Dependabot's PRs don't count, and the default limit of 30 truncates the list), the worker adds the
   `waiting-for-pr-slot` label instead of marking it ready. `pr-promote.yml` marks labeled drafts ready, oldest
   created first. Never apply `bypass-pr-limit` without Eduardo.
-- **Merge:** a draft can't carry auto-merge. The worker turns it on once the PR is ready (promoted or marked) and the
-  orchestrator pings it on promotion.
+- **Merge:** a draft can't carry auto-merge. The worker turns it on as soon as the PR is ready (promoted or marked),
+  without waiting for CI, since auto-merge waits for the required checks itself; the orchestrator pings it on promotion.
 - **Cloud:** environment `ts-agent-p1`. Restore needs the private NuGet feed, the `@outsystems` npm packages and Node
   22.18+; a restore failure means the ticket goes to a local worker.
 
