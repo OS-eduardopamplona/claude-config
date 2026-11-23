@@ -14,6 +14,7 @@ const REPOS = {
 const HOME = path.join(os.homedir(), ".claude", "auto-review");
 const LOCK = path.join(HOME, "lock.json");
 const QUEUE = path.join(HOME, "requested.txt");
+const WEBHOOK_FILE = path.join(HOME, "slack-webhook.txt");
 const LOCK_TTL_MS = 3 * 60 * 60 * 1000;
 const OPTIONS = new Set(["dry-run", "deep"]);
 const ALERTED = path.join(HOME, "alerted.json");
@@ -459,22 +460,40 @@ async function post(args) {
     const res = JSON.parse(gh("api", "--method", "POST", `repos/${repo}/issues/${number}/comments`, "--input", payload));
     console.log(res.html_url);
   }
-  if (p.ready) notifyReady(p);
+  if (p.ready) await notifyReady(p);
 }
 
-function notifyReady(p) {
+async function notifyReady(p) {
   const { repo, number, round, title, url } = p.meta;
   const link = url ?? `https://github.com/${repo}/pull/${number}`;
-  console.log(`DM: [${repo.split("/")[1]}#${number}](${link}) ${title ?? ""}: round ${round}, no blocking issues${p.tally ? ` (${p.tally}, the author decides)` : ""}.`);
+  const summary = `Round ${round}: no blocking issues${p.tally ? ` (${p.tally}, the author decides)` : ""}.`;
+  await slack({ repo, pr: String(number), title: title ?? "", url: link, summary },
+    `[${repo.split("/")[1]}#${number}](${link}) ${title ?? ""}: ${summary}`);
 }
 
-function alert([title, ...text]) {
+async function alert([title, ...text]) {
   const summary = text.join(" ").split(/\r?\n/)[0];
   const last = readJson(ALERTED);
   if (last?.text === summary && Date.now() - last.at < ALERT_QUIET_MS) return console.log(`already alerted at ${new Date(last.at).toISOString()}: ${summary}`);
   fs.mkdirSync(HOME, { recursive: true });
   fs.writeFileSync(ALERTED, JSON.stringify({ at: Date.now(), text: summary }));
-  console.log(`DM: **${title}** ${summary}`);
+  await slack({ repo: "auto-review", pr: "-", title, url: "https://github.com/pulls/review-requested", summary }, `**${title}** ${summary}`);
+}
+
+async function slack(fields, dm) {
+  if (!fs.existsSync(WEBHOOK_FILE)) return console.log(`DM: ${dm}`);
+  try {
+    const res = await fetch(fs.readFileSync(WEBHOOK_FILE, "utf8").trim(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(fields),
+    });
+    if (res.ok) return console.log("Slack workflow notified");
+    console.log(`Slack workflow answered ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  } catch (e) {
+    console.log(`Slack workflow failed: ${e.message}`);
+  }
+  console.log(`DM: ${dm}`);
 }
 
 function lock([token]) {

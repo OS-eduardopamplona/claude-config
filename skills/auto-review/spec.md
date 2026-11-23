@@ -82,11 +82,12 @@ default, one Opus subagent per PR. Since Nov 19 2026 the scheduled session itsel
 - Nothing blocking: one comment "no blocking issues at <sha>", resolved threads listed, @OS-eduardopamplona tagged, and
   a Slack DM. Never approves.
 - A failed run DMs Eduardo on Slack (throttled 4h) and stops the run.
-- Slack DMs go through the Slack connector to Eduardo's own DM: `ar` prints `DM: <text>` lines and the
-  orchestrating session sends them.
+- Slack messages go to Eduardo's "Auto-reviewer" workflow: `ar` POSTs `repo`, `pr`, `title`, `url`, `summary` to the
+  webhook trigger URL in `~/.claude/auto-review/slack-webhook.txt` (never committed). With no file or a failed POST
+  it prints `DM: <text>` and the orchestrating session sends it to Eduardo's own DM through the Slack connector.
 
 ## Removed from the previous design
 Parallel batches (`MAX_PER_RUN` slots, `claims.json`, `tried-<pid>.txt`, slot worktrees `ar-*-2..4`), the fetch mutex,
 local builds and red/green by default, the always-on verifier. On Nov 19 2026: `run.sh`, headless `claude -p` runs
-and their logs, the pid lock, the Slack workflow webhook, and reviewing PRs that never requested Eduardo.
+and their logs, the pid lock, and reviewing PRs that never requested Eduardo.
 Cleanup on rollout: delete worktrees `ar-model-2..4`, `ar-mx-2..3`, `ar-r4176` (~25 GB) and old `runs/`.

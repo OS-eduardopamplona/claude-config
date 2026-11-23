@@ -37,7 +37,8 @@ No PRs means a scheduled pass.
    to step 4.
 4. **Unlock.** `ar unlock <token>`. Exit 4 means PRs were queued meanwhile: review what `ar take` prints as in step 3,
    then unlock again.
-5. **DM.** Every `DM: <text>` line an `ar` command printed is a Slack message to Eduardo: send `<text>` with the Slack
+5. **DM.** `ar` notifies Eduardo's Slack workflow itself and prints `DM: <text>` only when it could not. Every such line
+   is a Slack message to Eduardo: send `<text>` with the Slack
    connector's `slack_send_message` (load it with ToolSearch), `channel_id` `U09RXPNJ9C6`. Send each as it appears.
 6. **Report** in at most eight lines: each PR (repo#number, round, the posted URL, the dry-run's `post.md`, or the
    failure), "nothing due", or that the PRs were queued.
