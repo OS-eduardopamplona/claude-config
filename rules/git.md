@@ -4,6 +4,10 @@
 - Always branch from `master` (or main): `git checkout -b <branch-name> master` unless Eduardo instructs otherwise.
 - When asked to update a branch from master/main, always `git pull` on master first to get the latest remote changes, then merge into the branch.
 
+## Worktrees and working files
+- A worktree you add outside `<repo>\.claude\worktrees` (such as a short `C:\git\me-<n>`) is yours to remove, since the app's cleanup never sees it: once its PR merges or the work is dropped, `git -C <clone> worktree remove --force <path>`. The branch stays.
+- `C:\git` holds only clones and worktrees. Logs, patches, PR bodies, probe and sweep output and caches go in your scratchpad; a file another session must read goes in the family's shared notes folder.
+
 ## Merging master
 - Merge master into a PR branch only when GitHub reports a conflict or the branch needs something from master, never ahead of time.
 - Run `git merge origin/master` on the branch, so the branch is the first parent. Master as first parent leaves GitHub's stored PR base stale: the PR lists master's commits and requests reviews from their code owners.
