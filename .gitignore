@@ -9,6 +9,8 @@
 !rules/*.md
 rules/koda.*
 !skills/
+!agents/
+!agents/*.md
 !skills/**
 !learnings/
 !learnings/*.md

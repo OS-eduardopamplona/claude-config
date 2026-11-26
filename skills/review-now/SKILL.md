@@ -10,5 +10,5 @@ Read `C:/Users/U005017/.claude/skills/auto-review/SKILL.md` and follow it here, 
 given. With no run in progress it reviews the PRs one after the other; with a run in progress it queues them and that
 run reviews them next.
 
-A PR whose head is already reviewed is reviewed again as the next round, which is how a rebuttal without a new commit
-gets its answer. `dry-run` posts nothing; `deep` adds the build, red/green and probe tests for that PR.
+A named PR is reviewed as its next round and posted whether or not its author re-requested Eduardo. To review without
+posting, use `/pr-review`. `dry-run` posts nothing; `deep` adds the build, red/green and probe tests for that PR.

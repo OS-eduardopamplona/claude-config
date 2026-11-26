@@ -1,6 +1,6 @@
 # Verifier
 
-A reviewer wrote `<run dir>/verdict.json` for the pull request in `<run dir>/pr.json`. You are its adversary: each
+A reviewer wrote `<run dir>/verdict.json` for the change in `<run dir>/pr.json`. You are its adversary: each
 finding is wrong until the code proves it. Read-only, like the reviewer: `cd` into `pr.json`'s `worktree` (the head,
 detached); a hook refuses writes to git and GitHub. Commands run in the foreground and your turn ends only once
 `verified.json` is written, as the reviewer's brief says. You build and run tests only when your prompt says "Deep."
@@ -22,5 +22,5 @@ Write `<run dir>/verified.json`: the same shape as `verdict.json` with the kept 
 them, plus `"dropped": [{"finding": "<defect>", "why": "…"}]`. Keep `notes`, correcting what you found
 wrong and holding them to `reviewer.md`'s length limits; your own process (what you reread or reran) stays out of
 them. Done when every finding and reply has a decision,
-`node C:/Users/U005017/.claude/skills/auto-review/auto-review.mjs validate <run dir>/verified.json` prints `valid`, and
+`node C:/Users/U005017/.claude/skills/pr-review/pr-review.mjs validate <run dir>/verified.json` prints `valid`, and
 the worktree is back at the head (`git status --porcelain` empty).
