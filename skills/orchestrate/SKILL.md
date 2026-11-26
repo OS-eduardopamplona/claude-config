@@ -97,8 +97,8 @@ Due when `RESULTs since` reaches 30, or 6 hours passed since the last retro and 
 ## Close
 
 When every row is `done`, `dropped` or `skipped`: run a final retro, delete the cron and the scheduled task, archive the
-remaining workers, report the family's cost with `orchestration-telemetry` (`--root self`), and ask Eduardo whether to
-move `<KEY>` itself.
+remaining workers and remove their short worktrees still on disk, report the family's cost with `orchestration-telemetry`
+(`--root self`), and ask Eduardo whether to move `<KEY>` itself.
 
 ## Escalate to Eduardo
 

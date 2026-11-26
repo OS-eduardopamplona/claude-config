@@ -27,7 +27,7 @@ newer than `Checked`. Pending checks skip CI only.
 | Red, infra (agent lost, timeout, no test failure) | rerun per the profile yourself; `Head` → `—` |
 | Conflicting | the worker merges the default branch, resolves, runs the targeted tests, pushes |
 | Review | an unresolved thread or a person's CHANGES_REQUESTED → the worker, verbatim; it fixes or replies with the reason, pushes, resolves the thread |
-| Merged | ticket → Done; archive the worker; row → `done` |
+| Merged | ticket → Done; remove the profile's short worktree if it is still on disk (`git -C <clone> worktree remove --force <short path>`); archive the worker; row → `done` |
 | Closed unmerged | row → `blocked`; escalate; keep the worker |
 
 A cloud row's reactions go to its relay, which forwards them. Send reactions to a `paused` row's worker only once the
