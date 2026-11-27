@@ -62,7 +62,8 @@ Derived from Ruben's, Francisco's and Nuno's reviewers and the RDMST-5044 loop r
 - Every round is one COMMENTED review, all-clears included, so the author can re-request. Never approves.
 - A round with findings, or with a thread still open or rebutted, ends with: "Once you've addressed these, or replied in
   a thread where you disagree, re-request my review."
-- An all-clear tags @OS-eduardopamplona for the human pass.
+- An all-clear (no findings of any severity, no thread still open or rebutted) tags @OS-eduardopamplona for the human
+  pass. A round with only Minors or Nits is not one.
 
 ## Slack
 - On an all-clear and on a failed pass (throttled 4h per text): `ar` POSTs `repo`, `pr`, `title`, `url`, `summary` to

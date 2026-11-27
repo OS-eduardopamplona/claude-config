@@ -192,11 +192,11 @@ function plan(dir, requested = null) {
     ...(notes.length ? ["", "**Notes**", ...notes] : []),
     ...(awaitsAuthor ? ["", RE_REQUEST] : []),
     ...(findings.length ? ["", LEGEND] : []),
-    ...(blocking.length ? [] : ["", `@${ME} for the human pass.`]),
+    ...(awaitsAuthor ? [] : ["", `@${ME} for the human pass.`]),
     "",
     marker,
   ].join("\n");
-  return { meta, body, ready: !blocking.length, tally, inline: inline.map((f) => ({ path: f.file, line: f.line, side: "RIGHT", body: renderFinding(f) })), replies, dropped };
+  return { meta, body, ready: !awaitsAuthor, inline: inline.map((f) => ({ path: f.file, line: f.line, side: "RIGHT", body: renderFinding(f) })), replies, dropped };
 }
 
 function renderPlan(p) {
@@ -241,7 +241,7 @@ async function post(args) {
 async function notifyReady(p) {
   const { repo, number, round, title, url } = p.meta;
   const link = url ?? `https://github.com/${repo}/pull/${number}`;
-  const summary = `Round ${round}: no blocking issues${p.tally ? ` (${p.tally}, the author decides)` : ""}.`;
+  const summary = `Round ${round}: all clear, ready for your pass.`;
   await slack({ repo, pr: String(number), title: title ?? "", url: link, summary },
     `[${repo.split("/")[1]}#${number}](${link}) ${title ?? ""}: ${summary}`);
 }

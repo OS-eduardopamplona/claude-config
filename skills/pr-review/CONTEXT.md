@@ -43,4 +43,4 @@ The PR author asking Eduardo for review again after a round; the only thing that
 _Avoid_: new commits, push
 
 **All-clear**:
-A round with no blocking findings, posted as a review so the author can re-request later.
+A round with no findings of any severity and no thread still open or rebutted; the only round that tags Eduardo and notifies Slack.
